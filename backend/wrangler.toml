@@ -1,0 +1,9 @@
+name = "tc-block-api"
+main = "src/index.js"
+compatibility_date = "2024-09-01"
+
+# Cloudflare D1 Database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "tc-block-db"
+database_id = "tc-block-db-local-id"

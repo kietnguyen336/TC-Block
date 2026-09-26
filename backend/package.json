@@ -1,0 +1,23 @@
+{
+  "name": "tc-block-backend",
+  "version": "1.0.0",
+  "description": "Cloudflare Worker & D1 API for TC-Block YouTube community channel reporting",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node test/test-server.js"
+  },
+  "keywords": [
+    "youtube",
+    "blocker",
+    "cloudflare-worker",
+    "d1"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "wrangler": "^3.78.0"
+  }
+}
