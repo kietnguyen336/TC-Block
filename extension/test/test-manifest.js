@@ -11,7 +11,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const extDir = path.resolve(__dirname, '..');
 
 function testManifest() {
-  console.log('🧪 Bắt đầu kiểm tra Manifest V3 và tài nguyên extension...\n');
+  console.log('[TEST] Bat dau kiem tra Manifest V3 va tai nguyen extension...\n');
 
   // 1. Đọc và parse manifest.json
   const manifestPath = path.join(extDir, 'manifest.json');
@@ -25,7 +25,7 @@ function testManifest() {
   assert.ok(manifest.version, 'Extension phải có phiên bản');
   assert.ok(manifest.permissions.includes('storage'), 'Cần quyền storage');
   assert.ok(manifest.permissions.includes('alarms'), 'Cần quyền alarms');
-  console.log('  ✅ Pass: Cấu trúc manifest.json hợp lệ chuẩn MV3');
+  console.log('  [PASS] Cau truc manifest.json hop le chuan MV3');
 
   // 3. Kiểm tra file icons
   ['16', '48', '128'].forEach(size => {
@@ -36,25 +36,25 @@ function testManifest() {
     const stat = fs.statSync(iconPath);
     assert.ok(stat.size > 0, `File icon ${iconRel} không được rỗng`);
   });
-  console.log('  ✅ Pass: Toàn bộ 3 kích thước icon PNG (16, 48, 128) đều tồn tại và hợp lệ');
+  console.log('  [PASS] Toan bo 3 kich thuoc icon PNG (16, 48, 128) deu ton tai va hop le');
 
   // 4. Kiểm tra background service worker
   const swRel = manifest.background?.service_worker;
   assert.ok(swRel, 'Phải khai báo background.service_worker');
   const swPath = path.join(extDir, swRel);
   assert.ok(fs.existsSync(swPath), `File Service Worker ${swRel} phải tồn tại`);
-  console.log('  ✅ Pass: File Service Worker background.js tồn tại');
+  console.log('  [PASS] File Service Worker background.js ton tai');
 
   // 5. Kiểm tra host_permissions
   assert.ok(manifest.host_permissions.some(h => h.includes('youtube.com')), 'Phải có quyền truy cập youtube.com');
-  console.log('  ✅ Pass: Host permissions bao gồm YouTube và Cloudflare API');
+  console.log('  [PASS] Host permissions bao gom YouTube va Cloudflare API');
 
-  console.log('\n🎉 TOÀN BỘ KIỂM TRA MANIFEST V3 ĐÃ PASS 100%!');
+  console.log('\n[PASS] TOAN BO KIEM TRA MANIFEST V3 DA PASS 100%!');
 }
 
 try {
   testManifest();
 } catch (e) {
-  console.error('❌ Kiểm tra manifest thất bại:', e);
+  console.error('[FAIL] Kiem tra manifest that bai:', e);
   process.exit(1);
 }

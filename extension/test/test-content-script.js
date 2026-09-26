@@ -14,7 +14,7 @@ const extDir = path.resolve(__dirname, '..');
 const EMOJI_REGEX = /[\u{1F300}-\u{1F6FF}\u{1F900}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/u;
 
 function testContentScript() {
-  console.log('🧪 Bắt đầu kiểm tra Content Script (Task 3 & Task 4)...\n');
+  console.log('[TEST] Bat dau kiem tra Content Script (Task 3 & Task 4)...\n');
 
   const jsPath = path.join(extDir, 'content', 'content.js');
   const cssPath = path.join(extDir, 'content', 'content.css');
@@ -27,18 +27,18 @@ function testContentScript() {
 
   // Test 1: Kiểm tra quy tắc nghiêm ngặt: KHÔNG SỬ DỤNG EMOJI
   {
-    console.log('Test 1: Kiểm tra quy định "Không sử dụng emoji" trong content.js & content.css');
+    console.log('Test 1: Kiem tra quy dinh khong su dung emoji trong content.js & content.css');
     const jsEmojiMatch = jsContent.match(EMOJI_REGEX);
     assert.strictEqual(jsEmojiMatch, null, `Phát hiện emoji trong content.js: ${jsEmojiMatch ? jsEmojiMatch[0] : ''}`);
 
     const cssEmojiMatch = cssContent.match(EMOJI_REGEX);
     assert.strictEqual(cssEmojiMatch, null, `Phát hiện emoji trong content.css: ${cssEmojiMatch ? cssEmojiMatch[0] : ''}`);
-    console.log('  ✅ Pass: 100% không có bất kỳ emoji nào trong code');
+    console.log('  [PASS] 100% khong co bat ky emoji nao trong code');
   }
 
   // Test 2: Kiểm tra các thành phần cốt lõi của Task 3 & Task 4
   {
-    console.log('Test 2: Kiểm tra sự hiện diện của các tính năng bắt buộc');
+    console.log('Test 2: Kiem tra su hien dien cua cac tinh nang bat buoc');
     assert.ok(jsContent.includes('attachShadow'), 'Modal phải được đóng gói bằng Shadow DOM');
     assert.ok(jsContent.includes('MutationObserver'), 'Phải sử dụng MutationObserver');
     assert.ok(jsContent.includes('requestAnimationFrame'), 'Phải kết hợp requestAnimationFrame để tối ưu hiệu năng');
@@ -46,24 +46,24 @@ function testContentScript() {
     assert.ok(jsContent.includes('injectWatchPageButton'), 'Phải có hàm inject nút trang xem video /watch');
     assert.ok(jsContent.includes('injectChannelPageButton'), 'Phải có hàm inject nút trang chủ kênh');
     assert.ok(jsContent.includes('tc-card-report-btn'), 'Phải có class nút báo cáo trên thẻ video');
-    console.log('  ✅ Pass: Đầy đủ các module Shadow DOM, MutationObserver, và các hàm inject');
+    console.log('  [PASS] Day du cac module Shadow DOM, MutationObserver, va cac ham inject');
   }
 
   // Test 3: Kiểm tra CSS Material Design
   {
-    console.log('Test 3: Kiểm tra CSS quy định Material Design và màu đỏ hồng YouTube');
+    console.log('Test 3: Kiem tra CSS quy dinh Material Design va mau do hong YouTube');
     assert.ok(cssContent.includes('#FFF0F2') || cssContent.includes('#FFD0D6'), 'CSS phải có màu đỏ hồng nhạt #FFF0F2');
     assert.ok(cssContent.includes('backdrop-filter: blur'), 'CSS phải có hiệu ứng blur');
     assert.ok(cssContent.includes('.tc-channel-blocked'), 'CSS phải có class ẩn video');
-    console.log('  ✅ Pass: CSS tuân thủ Material Design, bảng màu và hiệu ứng blur');
+    console.log('  [PASS] CSS tuan thu Material Design, bang mau va hieu ung blur');
   }
 
-  console.log('\n🎉 TOÀN BỘ KIỂM THỬ CONTENT SCRIPT ĐÃ PASS 100%!');
+  console.log('\n[PASS] TOAN BO KIEM THU CONTENT SCRIPT DA PASS 100%!');
 }
 
 try {
   testContentScript();
 } catch (e) {
-  console.error('❌ Kiểm tra thất bại:', e);
+  console.error('[FAIL] Kiem tra that bai:', e);
   process.exit(1);
 }
