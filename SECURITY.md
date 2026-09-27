@@ -21,6 +21,10 @@ Mã nguồn và địa chỉ API được coi là công khai. Backend không tin
 
 JWT/JWKS dùng thư viện `jose`; không tự cài đặt thuật toán ký. JWKS chỉ lấy từ team domain cấu hình phía server, có timeout và cache; không lấy URL từ JWT do người gọi đưa vào.
 
+## Lưu giữ và dọn dữ liệu
+
+Retention tự động chạy hàng tuần: báo cáo quá 90 ngày và audit/sự kiện quá 180 ngày bị xóa; credential hết hạn, danh tính không còn dữ liệu liên quan và hồ sơ chờ/từ chối cũ không còn bằng chứng cũng được dọn. Kênh đã duyệt được giữ vì là dữ liệu cốt lõi của danh sách chặn. Endpoint reset database chỉ dành cho admin đã qua Access/local auth, yêu cầu CSRF cùng origin và cụm xác nhận chính xác; thao tác xóa dữ liệu động nhưng giữ schema, `public_state` và một bản ghi audit `database.reset`.
+
 ## Cấu hình production
 
 Thiếu cấu hình cần thiết sẽ từ chối yêu cầu. Không deploy bản public với `LOCAL_DEV=true`; flag này chỉ được chấp nhận ở loopback HTTP và public host sẽ trả 503 nếu bật nhầm.

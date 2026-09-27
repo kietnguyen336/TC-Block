@@ -37,6 +37,23 @@ function queryKeys(url, allowed) {
 function audit(db, actor, action, target) {
   return db.prepare('INSERT INTO security_audit (actor, action, target) VALUES (?, ?, ?)').bind(actor, action, target);
 }
+export async function cleanupExpiredData(db) {
+  return db.batch([
+    db.prepare("DELETE FROM community_reports WHERE created_at < datetime('now', '-90 days')"),
+    db.prepare("DELETE FROM moderation_events WHERE created_at < datetime('now', '-180 days')"),
+    db.prepare("DELETE FROM security_audit WHERE created_at < datetime('now', '-180 days')"),
+    db.prepare(`DELETE FROM reporter_credentials WHERE expires_at <= unixepoch() OR reporter_id IN (
+      SELECT p.id FROM reporters p LEFT JOIN community_reports r ON r.reporter_id = p.id
+      WHERE r.reporter_id IS NULL AND p.created_at < datetime('now', '-30 days'))`),
+    db.prepare(`DELETE FROM reporters WHERE NOT EXISTS (
+      SELECT 1 FROM community_reports r WHERE r.reporter_id = reporters.id) AND NOT EXISTS (
+      SELECT 1 FROM reporter_credentials c WHERE c.reporter_id = reporters.id)`),
+    db.prepare(`DELETE FROM moderation_channels WHERE status != 'approved'
+      AND updated_at < datetime('now', '-180 days')
+      AND NOT EXISTS (SELECT 1 FROM community_reports r WHERE r.channel_handle = moderation_channels.channel_handle)
+      AND NOT EXISTS (SELECT 1 FROM moderation_events e WHERE e.channel_handle = moderation_channels.channel_handle)`),
+  ]);
+}
 const recentCount = `(SELECT COUNT(*) FROM community_reports r JOIN reporters p ON p.id = r.reporter_id
   WHERE r.channel_handle = c.channel_handle AND p.active = 1
   AND r.created_at >= datetime('now', '-30 days'))`;
@@ -56,13 +73,35 @@ async function adminApi(request, env, url, actor) {
       db.prepare("SELECT COUNT(*) AS value FROM moderation_channels WHERE status = 'approved'"),
       db.prepare("SELECT COUNT(*) AS value FROM moderation_channels WHERE status = 'rejected'"),
       db.prepare("SELECT COUNT(*) AS value FROM community_reports WHERE created_at >= datetime('now', '-30 days')"),
-      db.prepare('SELECT COUNT(*) AS value FROM reporters WHERE active = 1'),
+      db.prepare(`SELECT COUNT(DISTINCT p.id) AS value FROM reporters p
+        JOIN community_reports r ON r.reporter_id = p.id
+        WHERE p.active = 1 AND r.created_at >= datetime('now', '-30 days')`),
     ]);
     const values = rows.map(row => Number(row.results[0]?.value || 0));
     return json({ success: true, data: {
       pending: values[0], priority: values[1], approved: values[2], rejected: values[3],
       reports_30d: values[4], active_reporters: values[5],
     } });
+  }
+  if (path === '/api/admin/database/reset' && method === 'POST') {
+    queryKeys(url, []);
+    const body = await bodyOf(request);
+    if (body.confirmation !== 'XOA TOAN BO') fail('Cụm xác nhận không đúng');
+    await db.batch([
+      db.prepare('DELETE FROM community_reports'),
+      db.prepare('DELETE FROM moderation_events'),
+      db.prepare('DELETE FROM reporter_credentials'),
+      db.prepare('DELETE FROM reporters'),
+      db.prepare('DELETE FROM moderation_channels'),
+      db.prepare('DELETE FROM security_audit'),
+      db.prepare('UPDATE public_state SET revision = revision + 1 WHERE id = 1'),
+      audit(db, actor, 'database.reset', 'all application data'),
+    ]);
+    try {
+      const cache = globalThis.caches?.default;
+      if (cache) await cache.delete(new Request(new URL('/api/blocked', env.API_ORIGIN).toString()));
+    } catch { /* A stale public response can remain for at most its 60-second TTL. */ }
+    return json({ success: true });
   }
   const credential = path.match(/^\/api\/admin\/reporters\/([a-f0-9-]{36})\/revoke$/);
   if (credential && method === 'POST') {
@@ -276,5 +315,9 @@ export default {
     for (const [key, value] of response.headers) headers.set(key, value);
     headers.set('X-Request-Id', requestId);
     return new Response(response.body, { status: response.status, headers });
+  },
+  async scheduled(controller, env, ctx) {
+    if (!env.DB) return;
+    ctx.waitUntil(cleanupExpiredData(env.DB).catch(error => console.error(JSON.stringify({ event: 'retention_cleanup_failed', message: error.message }))));
   },
 };

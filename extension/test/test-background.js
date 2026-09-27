@@ -16,6 +16,8 @@ const client = backgroundHarness(async (url, options) => {
 const report = {channel_handle:'@spam',channel_name:'Spam',reason:'Repeated spam'};
 assert.equal(Object.keys((await client.send({action:'GET_BLOCKED_CHANNELS'})).channels).length, 0, 'Unmoderated legacy cache must not become approved');
 assert.equal((await client.send({action:'GET_SUMMARY'})).blockedCount, 0, 'Popup gets only a lightweight count');
+await client.send({action:'FORCE_SYNC'});
+assert.equal(calls.filter(c=>c.url.endsWith('/api/register')).length,0,'Sync and extension reload do not create unused identities');
 let result = await client.send({action:'SUBMIT_REPORT',data:report});
 assert.equal(result.success, true);
 assert.equal(result.queued, false);

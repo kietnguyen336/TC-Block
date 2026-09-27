@@ -82,6 +82,8 @@ Mở `ADMIN_ORIGIN/admin` để quản trị qua Cloudflare Access. Người dù
 
 Danh sách cộng đồng đồng bộ mỗi 10 phút, lúc khởi động hoặc khi bấm đồng bộ trong trang **View blocked channels**; public cache có thể trễ tối đa 60 giây. Popup chỉ đọc số lượng đã lưu cục bộ, không tải hoặc dựng toàn bộ danh sách. API trả 500 kênh/trang và extension chỉ thay cache khi tải đủ các trang cùng phiên bản (tối đa 100 trang). Chặn riêng và ngoại lệ được giữ qua các lần đồng bộ. Mất mạng hoặc token ẩn danh hết hạn sẽ giữ báo cáo để thử lại và tự gia hạn khi có mạng; trang quản lý hiển thị lỗi. Extension tuân thủ `Retry-After`, gửi tối đa 5 báo cáo chờ mỗi lần đồng bộ và giới hạn kích thước phản hồi.
 
+Token ẩn danh chỉ được tạo khi có báo cáo cần gửi; reload/cài cập nhật và đồng bộ thông thường không tạo token. Tác vụ retention chạy mỗi Chủ nhật: phiếu quá 90 ngày, audit/sự kiện quá 180 ngày, credential hết hạn, danh tính bỏ hoang và hồ sơ chờ/từ chối cũ không còn bằng chứng sẽ bị xóa. Kênh đã duyệt được giữ để tiếp tục phát hành trong danh sách chặn. Admin có nút **Dọn database** để reset toàn bộ dữ liệu động; thao tác yêu cầu nhập `XOA TOAN BO` và giữ lại một audit reset cùng `public_state`.
+
 ## Nâng cấp từ bản cũ
 
 Chạy lại `schema.sql` cho D1 đang dùng trước khi nâng cấp Worker; lệnh có thể chạy lặp lại. Các bảng mới tách khỏi `blocked_channels` / `reports` cũ và không xóa dữ liệu cũ. Dữ liệu cũ chưa có danh tính người báo cáo hoặc quyết định duyệt nên **không tự đưa vào danh sách cộng đồng mới**; có thể xem lại thủ công khi cần.

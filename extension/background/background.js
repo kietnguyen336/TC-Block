@@ -86,24 +86,36 @@ async function ensureReporter(state, force = false) {
   scope.tokenExpiresAt = data.expires_at;
   await save(state);
 }
+async function provisionReporter(state, force = false) {
+  const scope = scopeOf(state);
+  try { await ensureReporter(state, force); }
+  catch (error) {
+    if (!scope.token || (error.status !== 401 && error.status !== 403)) throw error;
+    scope.token = ''; scope.tokenExpiresAt = 0;
+    await save(state);
+    await ensureReporter(state, true);
+  }
+}
 async function flushReports(state, onlyHandle) {
   const scope = scopeOf(state);
+  const pending = Object.entries(scope.pending).filter(([handle, entry]) =>
+    (!onlyHandle || handle === onlyHandle) && entry.status !== 'failed');
+  if (!pending.length) return;
   if (scope.reportRetryAt > Date.now()) return;
-  try { await ensureReporter(state); }
+  try { await provisionReporter(state); }
   catch (err) {
     if (err.status === 429) scope.reportRetryAt = Date.now() + err.retryAfter * 1000;
     for (const entry of Object.values(scope.pending)) entry.error = 'Không thể khởi tạo danh tính ẩn danh: ' + err.message;
     await save(state); return;
   }
   let attempts = 0;
-  for (const [handle, entry] of Object.entries(scope.pending)) {
-    if ((onlyHandle && handle !== onlyHandle) || entry.status === 'failed') continue;
+  for (const [handle, entry] of pending) {
     if (++attempts > 5) break;
     try { await api(state, '/api/reports', entry.payload); delete scope.pending[handle]; }
     catch (err) {
       if (err.status === 401) {
-        try { await ensureReporter(state, true); await api(state, '/api/reports', entry.payload); delete scope.pending[handle]; continue; }
-        catch (retryError) { err = retryError; }
+        try { await provisionReporter(state, true); await api(state, '/api/reports', entry.payload); delete scope.pending[handle]; continue; }
+        catch (refreshError) { err = refreshError; }
       }
       entry.error = err.message;
       if (err.status === 429) scope.reportRetryAt = Date.now() + err.retryAfter * 1000;
@@ -198,7 +210,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function initialize() {
   chrome.storage.local.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' });
   chrome.alarms.create(SYNC_ALARM_NAME, { periodInMinutes: 10 });
-  enqueue(async () => { const state = await loadState(); await ensureReporter(state).catch(() => {}); return sync(state); }).catch(console.error);
+  enqueue(async () => sync(await loadState())).catch(console.error);
 }
 chrome.runtime.onInstalled.addListener(initialize);
 chrome.runtime.onStartup.addListener(initialize);

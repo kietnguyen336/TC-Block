@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import worker, { normalizeChannel } from '../src/index.js';
+import worker, { cleanupExpiredData, normalizeChannel } from '../src/index.js';
 import { adminPage } from '../src/admin.js';
 import { createD1 } from './d1.js';
 
@@ -74,8 +74,19 @@ assert.equal(DB.sqlite.prepare('SELECT token_hash FROM reporters WHERE id = ?').
 assert.equal(DB.sqlite.prepare('SELECT token_hash FROM reporters WHERE id = ?').get(people[0].reporter_id).token_hash === people[0].token, false);
 const summary = await admin('summary');
 assert.equal(summary.data.pending >= 1, true);
-assert.equal(summary.data.active_reporters, 6);
+assert.equal(summary.data.active_reporters, 5);
+const unused = await register();
+assert.equal((await admin('summary')).data.active_reporters, 5, 'Unused anonymous credentials are not counted as reporting sources');
+DB.sqlite.prepare("UPDATE reporters SET created_at = datetime('now', '-31 days') WHERE id = ?").run(unused.reporter_id);
+await cleanupExpiredData(DB);
+assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM reporters WHERE id = ?').get(unused.reporter_id).n, 0, 'Old credentials with no reports are cleaned up');
 // Parse the actual inline admin script, including escapes in the HTML template.
 new vm.Script(adminPage.match(/<script>([\s\S]*?)<\/script>/)[1]);
+assert.equal((await call('/api/admin/database/reset', 'POST', {confirmation:'XOA TOAN BO'}, people[0].token)).status, 401);
+assert.equal((await admin('database/reset', 'POST', {confirmation:'wrong'})).status, 400);
+assert.equal((await admin('database/reset', 'POST', {confirmation:'XOA TOAN BO'})).success, true);
+const resetSummary = await admin('summary');
+assert.deepEqual(resetSummary.data, {pending:0,priority:0,approved:0,rejected:0,reports_30d:0,active_reporters:0});
+assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM security_audit WHERE action = 'database.reset'").get().n, 1);
 DB.sqlite.close();
 console.log('PASS backend: authorization, distinct votes, rolling window, approval/rejection, revocation, validation, quota, SQL and admin script');

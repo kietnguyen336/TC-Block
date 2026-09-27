@@ -3,6 +3,9 @@ main = "src/index.js"
 compatibility_date = "2026-09-27"
 preview_urls = false
 
+[triggers]
+crons = ["17 3 * * SUN"]
+
 [vars]
 LOCAL_DEV = "false"
 # Fill in exact production origins. Missing values fail closed.
