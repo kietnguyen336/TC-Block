@@ -104,7 +104,9 @@ async function adminApi(request, env, url, actor) {
     const handle = channelFromPath(decision[1]);
     const body = await bodyOf(request);
     if (!['approved', 'rejected'].includes(body.status)) fail('Quyết định không hợp lệ');
-    const note = field(body.note, 'Ghi chú duyệt', 2000);
+    const rawNote = body.note ?? '';
+    if (typeof rawNote !== 'string' || rawNote.trim().length > 2000 || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(rawNote)) fail('Ghi chú duyệt không hợp lệ');
+    const note = rawNote.trim();
     if (!await db.prepare('SELECT channel_handle FROM moderation_channels WHERE channel_handle = ?').bind(handle).first()) fail('Không tìm thấy kênh', 404);
     await db.batch([
       db.prepare(`UPDATE moderation_channels SET status = ?, moderation_note = ?, reviewed_at = CURRENT_TIMESTAMP,
@@ -201,7 +203,8 @@ async function publicList(request, env, url, ctx) {
   await rateLimit(request, env, 'DB_LIMITER', 'database');
   const [state, page] = await env.DB.batch([
     env.DB.prepare('SELECT revision FROM public_state WHERE id = 1'),
-    env.DB.prepare(`SELECT channel_handle, channel_name, channel_url, moderation_note AS reason, updated_at
+    env.DB.prepare(`SELECT channel_handle, channel_name, channel_url,
+      COALESCE(NULLIF(moderation_note, ''), reason) AS reason, updated_at
       FROM moderation_channels WHERE status = 'approved' AND channel_handle > ? ORDER BY channel_handle LIMIT ?`).bind(cursor, PAGE_SIZE + 1),
   ]);
   const current = state.results[0].revision;
