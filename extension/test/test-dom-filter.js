@@ -1,101 +1,78 @@
-/**
- * Test Suite kiểm thử logic lọc DOM và trích xuất thông tin kênh YouTube
- */
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import { readFileSync } from 'node:fs';
 
-import assert from 'node:assert';
-
-// Mô phỏng logic trích xuất handle và kiểm tra chặn trong content script
-function extractChannelHandleFromHref(href) {
-  if (!href) return null;
-  try {
-    const url = new URL(href, 'https://www.youtube.com');
-    const pathname = url.pathname;
-
-    // Trường hợp 1: URL dạng /@username (chuẩn YouTube hiện đại)
-    const handleMatch = pathname.match(/\/(@[A-Za-z0-9_.-]+)/);
-    if (handleMatch) {
-      return handleMatch[1].toLowerCase();
-    }
-
-    // Trường hợp 2: URL dạng /channel/UC...
-    const channelMatch = pathname.match(/\/channel\/([A-Za-z0-9_-]+)/);
-    if (channelMatch) {
-      return channelMatch[1].toLowerCase();
-    }
-
-    // Trường hợp 3: URL dạng /c/CustomName hoặc /user/UserName
-    const customMatch = pathname.match(/\/(?:c|user)\/([A-Za-z0-9_.-]+)/);
-    if (customMatch) {
-      return '@' + customMatch[1].toLowerCase();
-    }
-  } catch (e) {
-    // URL không hợp lệ
-  }
-  return null;
+// Exercise the production content script with a minimal DOM fixture.
+const messages = [];
+let receive;
+let map = {};
+const timers = [];
+class Classes {
+  constructor() { this.values = new Set(); }
+  add(...items) { items.forEach(i => this.values.add(i)); }
+  remove(...items) { items.forEach(i => this.values.delete(i)); }
+  contains(item) { return this.values.has(item); }
 }
-
-// Kiểm tra xem một video item có thuộc kênh bị chặn không
-function shouldHideItem(itemLinks, blockedMap) {
-  for (const href of itemLinks) {
-    const handle = extractChannelHandleFromHref(href);
-    if (handle && blockedMap[handle]) {
-      return { shouldHide: true, matchedHandle: handle, info: blockedMap[handle] };
-    }
-  }
-  return { shouldHide: false };
-}
-
-function runDomFilterTests() {
-  console.log('[TEST] Bat dau kiem tra trich xuat va loc video YouTube...\n');
-
-  const blockedMap = {
-    '@toxicchannel': { channel_name: 'Toxic Channel', reason: 'Tin giả' },
-    '@spamreup': { channel_name: 'Spam Reup', reason: 'Bản quyền' },
-    'uc1234567890abcdef': { channel_name: 'Channel ID Test', reason: 'Lừa đảo' },
+function card(handle) {
+  const attrs = {};
+  const node = {
+    handle, classList: new Classes(), style: {}, button: null,
+    getAttribute(key) { return attrs[key] || null; },
+    setAttribute(key, value) { attrs[key] = value; },
+    removeAttribute(key) { delete attrs[key]; },
+    querySelector(selector) {
+      if (selector === '.tc-card-report-btn') return this.button;
+      if (selector === '#thumbnail') return this;
+      if (selector.includes('href') || selector.includes('channel-name')) return {
+        textContent: this.handle, href: 'https://www.youtube.com/' + this.handle,
+        getAttribute: () => '/' + this.handle,
+      };
+      return null;
+    },
+    appendChild(button) { this.button = button; button.remove = () => {this.button = null;}; },
   };
-
-  // Test 1: Trích xuất các kiểu URL YouTube khác nhau
-  {
-    console.log('Test 1: Trich xuat channel handle tu cac bien the link YouTube');
-    assert.strictEqual(extractChannelHandleFromHref('/@ToxicChannel'), '@toxicchannel');
-    assert.strictEqual(extractChannelHandleFromHref('https://www.youtube.com/@ToxicChannel/videos'), '@toxicchannel');
-    assert.strictEqual(extractChannelHandleFromHref('/@SpamReup?si=12345'), '@spamreup');
-    assert.strictEqual(extractChannelHandleFromHref('/channel/UC1234567890abcdef'), 'uc1234567890abcdef');
-    assert.strictEqual(extractChannelHandleFromHref('/c/KenhTuChe'), '@kenhtuche');
-    assert.strictEqual(extractChannelHandleFromHref('/watch?v=dQw4w9WgXcQ'), null);
-    console.log('  [PASS] Trich xuat va chuan hoa handle chuan xac 100%');
-  }
-
-  // Test 2: Thẻ video chứa kênh bị chặn
-  {
-    console.log('Test 2: Kiem tra quyet dinh an video bi chan');
-    const badVideoLinks = ['/watch?v=abc', '/@ToxicChannel', '/@ToxicChannel'];
-    const res = shouldHideItem(badVideoLinks, blockedMap);
-    assert.strictEqual(res.shouldHide, true);
-    assert.strictEqual(res.matchedHandle, '@toxicchannel');
-    assert.strictEqual(res.info.reason, 'Tin giả');
-    console.log('  [PASS] Nhan dien chinh xac video cua kenh bi chan');
-  }
-
-  // Test 3: Thẻ video của kênh bình thường không bị ẩn
-  {
-    console.log('Test 3: The video cua kenh trong sach');
-    const goodVideoLinks = ['/watch?v=xyz', '/@GoodChannel'];
-    const res = shouldHideItem(goodVideoLinks, blockedMap);
-    assert.strictEqual(res.shouldHide, false);
-    console.log('  [PASS] Bo qua video kenh khong bi chan');
-  }
-
-  // Test 4: Trích xuất với URL chữ hoa/thường lẫn lộn
-  {
-    console.log('Test 4: Case-insensitivity');
-    const mixedLinks = ['/@tOxIcChAnNeL'];
-    const res = shouldHideItem(mixedLinks, blockedMap);
-    assert.strictEqual(res.shouldHide, true);
-    console.log('  [PASS] Xu ly khong phan biet hoa thuong');
-  }
-
-  console.log('\n[PASS] TOAN BO KIEM THU LOC DOM DA PASS 100%!');
+  return node;
 }
-
-runDomFilterTests();
+const cards = [card('@spam'), card('@good')];
+const document = {
+  readyState: 'complete', body: {},
+  querySelectorAll() { return cards; },
+  createElement() {return {setAttribute(){},addEventListener(){}};},
+};
+const context = vm.createContext({
+  document, URL, CSS: {escape: value => value}, console,
+  window: {location:{origin:'https://www.youtube.com',pathname:'/'},getComputedStyle:()=>({position:'relative'}),requestAnimationFrame:fn=>fn(),addEventListener(){}},
+  chrome: {runtime: {
+    sendMessage(message, callback) { messages.push(message); if(callback) callback({channels:map}); return Promise.resolve(); },
+    onMessage: {addListener(fn){receive = fn;}},
+  }},
+  MutationObserver: class {observe(){}},
+  setTimeout(fn) {timers.push(fn);},
+});
+const source = readFileSync(new URL('../content/content.js', import.meta.url),'utf8');
+vm.runInContext(source, context);
+function drain() {while(timers.length) timers.shift()();}
+drain();
+assert.ok(cards[0].button);
+assert.equal(cards[0].classList.contains('tc-channel-blocked'),false);
+receive({action:'BLOCKLIST_UPDATED',channels:{'@spam':{}}}); drain();
+assert.equal(cards[0].classList.contains('tc-channel-blocked'),true,'Previously scanned card must hide after sync');
+assert.equal(cards[1].classList.contains('tc-channel-blocked'),false);
+receive({action:'BLOCKLIST_UPDATED',channels:{'@spam':{}}}); drain();
+assert.equal(messages.filter(m=>m.action==='INCREMENT_HIDDEN_COUNT').length,1,'Rescan must not double count');
+receive({action:'BLOCKLIST_UPDATED',channels:{}}); drain();
+assert.equal(cards[0].classList.contains('tc-channel-blocked'),false,'Personal exception or server removal restores card');
+const oldButton = cards[0].button;
+cards[0].handle = '@different';
+receive({action:'BLOCKLIST_UPDATED',channels:{'@different':{}}}); drain();
+assert.equal(cards[0].getAttribute('data-tc-handle'),'@different');
+assert.equal(cards[0].button,null,'Recycled card must discard old report target');
+assert.equal(cards[0].classList.contains('tc-channel-blocked'),true);
+cards[0].handle = '@tiếngviệt';
+receive({action:'BLOCKLIST_UPDATED',channels:{'@tiếngviệt':{}}}); drain();
+assert.equal(cards[0].classList.contains('tc-channel-blocked'),true);
+cards[0].handle = 'channel/UCabcdefghijklmnopqrstuv';
+receive({action:'BLOCKLIST_UPDATED',channels:{UCabcdefghijklmnopqrstuv:{}}}); drain();
+assert.equal(cards[0].getAttribute('data-tc-handle'),'UCabcdefghijklmnopqrstuv');
+assert.equal(cards[0].classList.contains('tc-channel-blocked'),true);
+console.log('PASS production content script: sync hides scanned cards, unblock restores, no double count, recycled cards, Unicode and channel IDs');

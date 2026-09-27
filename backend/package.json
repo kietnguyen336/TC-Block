@@ -5,9 +5,11 @@
   "main": "src/index.js",
   "type": "module",
   "scripts": {
+    "setup:local": "node scripts/setup-local.js",
+    "check": "wrangler deploy --dry-run --outdir dist",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "test": "node test/test-server.js"
+    "test": "node test/test-server.js && node test/test-security.js"
   },
   "keywords": [
     "youtube",
@@ -18,6 +20,9 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "wrangler": "^3.78.0"
+    "wrangler": "4.141.0"
+  },
+  "dependencies": {
+    "jose": "6.2.12"
   }
 }

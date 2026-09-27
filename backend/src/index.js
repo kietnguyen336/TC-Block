@@ -1,176 +1,267 @@
-/**
- * TC-Block Backend API (Cloudflare Worker + D1 Database)
- * Quản lý báo cáo kênh YouTube và danh sách chặn dùng chung cho cộng đồng.
- */
+import { renderAdminPage } from './admin.js';
+import { HttpError, fail, digest, bearer, bodyOf, localMode, checkTransport, ingress,
+  rateLimit, reportOrigin, checkAdminMutation, authenticateAdmin, randomToken, TOKEN_PATTERN, securityHeaders } from './security.js';
 
-// Tiêu chuẩn CORS cho phép Extension và Web gọi API
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key',
-  'Access-Control-Max-Age': '86400',
-};
+const PAGE_SIZE = 500;
+const TOKEN_LIFETIME_SECONDS = 90 * 86400;
+function json(data, status = 200, headers = {}) {
+  return new Response(JSON.stringify(data), { status, headers: {
+    'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers,
+  } });
+}
+export function normalizeChannel(value) {
+  if (typeof value !== 'string') return '';
+  const clean = value.trim().normalize('NFC');
+  if (/^UC[A-Za-z0-9_-]{22}$/.test(clean)) return clean;
+  const handle = clean.startsWith('@') ? clean : '@' + clean;
+  return /^@[\p{L}\p{M}\p{N}_.-]{1,100}$/u.test(handle) ? handle.toLowerCase() : '';
+}
+function channelFromPath(value) {
+  let decoded;
+  try { decoded = decodeURIComponent(value); } catch { fail('Kênh không hợp lệ'); }
+  const handle = normalizeChannel(decoded);
+  if (!handle) fail('Kênh không hợp lệ');
+  return handle;
+}
+function field(value, name, max) {
+  if (typeof value !== 'string' || value.trim().length > max || !value.trim() || /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(value)) fail(`${name} không hợp lệ`);
+  return value.trim();
+}
+function queryKeys(url, allowed) {
+  const seen = new Set();
+  for (const key of url.searchParams.keys()) {
+    if (!allowed.includes(key) || seen.has(key)) fail('Tham số không hợp lệ');
+    seen.add(key);
+  }
+}
+function audit(db, actor, action, target) {
+  return db.prepare('INSERT INTO security_audit (actor, action, target) VALUES (?, ?, ?)').bind(actor, action, target);
+}
+const recentCount = `(SELECT COUNT(*) FROM community_reports r JOIN reporters p ON p.id = r.reporter_id
+  WHERE r.channel_handle = c.channel_handle AND p.active = 1
+  AND r.created_at >= datetime('now', '-30 days'))`;
 
-function jsonResponse(data, status = 200, extraHeaders = {}) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      'Content-Type': 'application/json; charset=utf-8',
-      ...corsHeaders,
-      ...extraHeaders,
-    },
-  });
+async function adminApi(request, env, url, actor) {
+  const db = env.DB;
+  const path = url.pathname;
+  const method = request.method;
+  await rateLimit(request, env, 'ADMIN_LIMITER', actor);
+  await rateLimit(request, env, 'DB_LIMITER', 'database');
+  if (path === '/api/admin/me' && method === 'GET') return json({ success: true, actor });
+  if (path === '/api/admin/reporters' && method === 'GET') {
+    queryKeys(url, ['cursor']);
+    const cursor = url.searchParams.get('cursor') || '';
+    if (cursor && !/^[a-f0-9-]{36}$/.test(cursor)) fail('Cursor không hợp lệ');
+    const { results } = await db.prepare(`SELECT p.id, p.label, p.active, p.created_at, c.expires_at
+      FROM reporters p LEFT JOIN reporter_credentials c ON c.reporter_id = p.id
+      WHERE p.id > ? ORDER BY p.id LIMIT 101`).bind(cursor).all();
+    return json({ success: true, data: results.slice(0, 100), next_cursor: results.length > 100 ? results[99].id : null });
+  }
+  if (path === '/api/admin/reporters' && method === 'POST') {
+    queryKeys(url, []);
+    const body = await bodyOf(request);
+    const label = field(body.label, 'Tên người tham gia', 120);
+    const id = crypto.randomUUID();
+    const token = randomToken();
+    const expires = Math.floor(Date.now() / 1000) + TOKEN_LIFETIME_SECONDS;
+    await db.batch([
+      db.prepare('INSERT INTO reporters (id, label, token_hash) VALUES (?, ?, ?)').bind(id, label, await digest(token)),
+      db.prepare('INSERT INTO reporter_credentials (reporter_id, expires_at) VALUES (?, ?)').bind(id, expires),
+      audit(db, actor, 'reporter.issue', id),
+    ]);
+    return json({ success: true, id, token, expires_at: expires }, 201);
+  }
+  const credential = path.match(/^\/api\/admin\/reporters\/([a-f0-9-]{36})\/(revoke|rotate)$/);
+  if (credential && method === 'POST') {
+    queryKeys(url, []);
+    await bodyOf(request);
+    const [, id, operation] = credential;
+    const reporter = await db.prepare('SELECT active FROM reporters WHERE id = ?').bind(id).first();
+    if (!reporter) fail('Không tìm thấy người tham gia', 404);
+    if (operation === 'revoke') {
+      await db.batch([db.prepare('UPDATE reporters SET active = 0 WHERE id = ?').bind(id), audit(db, actor, 'reporter.revoke', id)]);
+      return json({ success: true });
+    }
+    if (!reporter.active) fail('Không đổi mã của người đã bị thu hồi quyền', 409);
+    const token = randomToken();
+    const expires = Math.floor(Date.now() / 1000) + TOKEN_LIFETIME_SECONDS;
+    await db.batch([
+      db.prepare('UPDATE reporters SET token_hash = ? WHERE id = ? AND active = 1').bind(await digest(token), id),
+      db.prepare(`INSERT INTO reporter_credentials (reporter_id, expires_at) VALUES (?, ?)
+        ON CONFLICT(reporter_id) DO UPDATE SET expires_at = excluded.expires_at`).bind(id, expires),
+      audit(db, actor, 'reporter.rotate', id),
+    ]);
+    return json({ success: true, id, token, expires_at: expires });
+  }
+  if (path === '/api/admin/channels' && method === 'GET') {
+    queryKeys(url, ['status', 'offset']);
+    const status = url.searchParams.get('status') || 'pending';
+    const offset = url.searchParams.get('offset') || '0';
+    if (!['pending', 'approved', 'rejected'].includes(status) || !/^\d{1,5}$/.test(offset)) fail('Tham số không hợp lệ');
+    const { results } = await db.prepare(`SELECT c.*, ${recentCount} AS recent_reports
+      FROM moderation_channels c WHERE c.status = ? ORDER BY recent_reports DESC, c.channel_handle LIMIT 101 OFFSET ?`).bind(status, Number(offset)).all();
+    return json({ success: true, data: results.slice(0, 100).map(c => ({ ...c, priority: c.status === 'pending' && c.recent_reports >= 5 })),
+      next_offset: results.length > 100 ? Number(offset) + 100 : null });
+  }
+  const evidence = path.match(/^\/api\/admin\/reports\/([^/]+)$/);
+  if (evidence && method === 'GET') {
+    queryKeys(url, []);
+    const handle = channelFromPath(evidence[1]);
+    const { results } = await db.prepare(`SELECT r.reason, r.created_at, p.label, p.active,
+      r.created_at >= datetime('now', '-30 days') AND p.active = 1 AS eligible
+      FROM community_reports r JOIN reporters p ON p.id = r.reporter_id
+      WHERE r.channel_handle = ? ORDER BY r.created_at DESC LIMIT 200`).bind(handle).all();
+    return json({ success: true, data: results });
+  }
+  const decision = path.match(/^\/api\/admin\/channels\/([^/]+)$/);
+  if (decision && method === 'POST') {
+    queryKeys(url, []);
+    const handle = channelFromPath(decision[1]);
+    const body = await bodyOf(request);
+    if (!['approved', 'rejected'].includes(body.status)) fail('Quyết định không hợp lệ');
+    const note = field(body.note, 'Ghi chú duyệt', 2000);
+    if (!await db.prepare('SELECT channel_handle FROM moderation_channels WHERE channel_handle = ?').bind(handle).first()) fail('Không tìm thấy kênh', 404);
+    await db.batch([
+      db.prepare(`UPDATE moderation_channels SET status = ?, moderation_note = ?, reviewed_at = CURRENT_TIMESTAMP,
+        updated_at = CURRENT_TIMESTAMP WHERE channel_handle = ?`).bind(body.status, note, handle),
+      db.prepare('INSERT INTO moderation_events (channel_handle, status, note) VALUES (?, ?, ?)').bind(handle, body.status, note),
+      audit(db, actor, 'channel.' + body.status, handle),
+      db.prepare('UPDATE public_state SET revision = revision + 1 WHERE id = 1'),
+    ]);
+    return json({ success: true });
+  }
+  fail('API không tồn tại', 404);
 }
 
-function normalizeHandle(handle) {
-  if (!handle) return '';
-  let clean = handle.trim().toLowerCase();
-  if (!clean.startsWith('@')) {
-    clean = '@' + clean;
+async function submitReport(request, env, url) {
+  queryKeys(url, []);
+  const token = bearer(request);
+  if (!TOKEN_PATTERN.test(token)) fail('Mã báo cáo không hợp lệ', 401);
+  // Reject malformed/oversized streams before spending a database operation.
+  const body = await bodyOf(request);
+  const handle = normalizeChannel(body.channel_handle);
+  if (!handle) fail('Kênh không hợp lệ');
+  const name = field(body.channel_name ?? handle, 'Tên kênh', 200);
+  const reason = field(body.reason, 'Lý do', 2000);
+  await rateLimit(request, env, 'DB_LIMITER', 'database');
+  const db = env.DB;
+  const reporter = await db.prepare(`SELECT p.id FROM reporters p JOIN reporter_credentials c ON c.reporter_id = p.id
+    WHERE p.token_hash = ? AND p.active = 1 AND c.expires_at > ?`).bind(await digest(token), Math.floor(Date.now() / 1000)).first();
+  if (!reporter) fail('Mã báo cáo không hợp lệ, hết hạn hoặc đã bị thu hồi', 401);
+  await rateLimit(request, env, 'REPORTER_LIMITER', reporter.id);
+  const existing = await db.prepare('SELECT created_at FROM community_reports WHERE channel_handle = ? AND reporter_id = ?').bind(handle, reporter.id).first();
+  if (existing) return json({ success: true, duplicate: true, message: 'Báo cáo đã được ghi nhận; không tăng phiếu' });
+  const channelUrl = `https://www.youtube.com/${handle.startsWith('@') ? encodeURIComponent(handle).replace('%40', '@') : 'channel/' + handle}`;
+  // Enforced inside the same transaction as insertion, including revocation/rotation/expiry races.
+  const eligible = `EXISTS (SELECT 1 FROM reporters p JOIN reporter_credentials c ON c.reporter_id = p.id
+    WHERE p.id = ? AND p.token_hash = ? AND p.active = 1 AND c.expires_at > unixepoch())
+    AND (SELECT COUNT(*) FROM community_reports WHERE reporter_id = ? AND created_at >= datetime('now', '-1 day')) < 20`;
+  const hash = await digest(token);
+  const writes = await db.batch([
+    db.prepare(`INSERT INTO moderation_channels (channel_handle, channel_name, channel_url, reason)
+      SELECT ?, ?, ?, ? WHERE ${eligible} ON CONFLICT(channel_handle) DO NOTHING`).bind(handle, name, channelUrl, reason, reporter.id, hash, reporter.id),
+    db.prepare(`INSERT INTO community_reports (channel_handle, reporter_id, reason)
+      SELECT ?, ?, ? WHERE ${eligible} ON CONFLICT(channel_handle, reporter_id) DO NOTHING`).bind(handle, reporter.id, reason, reporter.id, hash, reporter.id),
+  ]);
+  if (!writes[1].meta.changes) {
+    if (await db.prepare('SELECT created_at FROM community_reports WHERE channel_handle = ? AND reporter_id = ?').bind(handle, reporter.id).first()) {
+      return json({ success: true, duplicate: true });
+    }
+    fail('Đã đạt giới hạn báo cáo hoặc mã không còn hiệu lực', 429, 86400);
   }
-  return clean;
+  const channel = await db.prepare(`SELECT c.status, ${recentCount} AS recent_reports FROM moderation_channels c WHERE c.channel_handle = ?`).bind(handle).first();
+  return json({ success: true, message: 'Đã nhận báo cáo; chỉ chặn cộng đồng sau khi được duyệt',
+    data: { channel_handle: handle, ...channel, priority: channel.status === 'pending' && channel.recent_reports >= 5 } }, 201);
+}
+
+async function publicList(request, env, url, ctx) {
+  queryKeys(url, ['cursor', 'revision']);
+  const cursor = url.searchParams.get('cursor') || '';
+  const revision = url.searchParams.get('revision');
+  if (cursor && normalizeChannel(cursor) !== cursor) fail('Cursor không hợp lệ');
+  if (cursor && revision === null || revision !== null && !/^(0|[1-9]\d{0,14})$/.test(revision)) fail('Revision không hợp lệ');
+  // Cache only canonical public data, never credentials, CORS decisions or admin responses.
+  const canonical = new URL('/api/blocked', url.origin);
+  if (cursor) canonical.searchParams.set('cursor', cursor);
+  if (revision !== null) canonical.searchParams.set('revision', revision);
+  const key = new Request(canonical.toString());
+  const cache = !localMode(request, env) ? globalThis.caches?.default : null;
+  if (cache) {
+    try { const hit = await cache.match(key); if (hit) return hit; } catch { /* DB budget still applies. */ }
+  }
+  await rateLimit(request, env, 'DB_LIMITER', 'database');
+  const [state, page] = await env.DB.batch([
+    env.DB.prepare('SELECT revision FROM public_state WHERE id = 1'),
+    env.DB.prepare(`SELECT channel_handle, channel_name, channel_url, moderation_note AS reason, updated_at
+      FROM moderation_channels WHERE status = 'approved' AND channel_handle > ? ORDER BY channel_handle LIMIT ?`).bind(cursor, PAGE_SIZE + 1),
+  ]);
+  const current = state.results[0].revision;
+  if (revision !== null && Number(revision) !== current) fail('Danh sách đã đổi; hãy đồng bộ lại từ đầu', 409);
+  const rows = page.results.slice(0, PAGE_SIZE);
+  const response = json({ success: true, count: rows.length, data: rows, revision: current,
+    next_cursor: page.results.length > PAGE_SIZE ? rows.at(-1).channel_handle : null }, 200, { 'Cache-Control': 'public, max-age=60' });
+  if (cache && ctx?.waitUntil) ctx.waitUntil(cache.put(key, response.clone()).catch(() => {}));
+  return response;
 }
 
 export default {
-  async fetch(request, env, ctx) {
+  async fetch(request, env = {}, ctx) {
+    const requestId = crypto.randomUUID();
     const url = new URL(request.url);
-    const method = request.method.toUpperCase();
-
-    // 1. Xử lý preflight CORS OPTIONS request
-    if (method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: corsHeaders,
-      });
-    }
-
+    const path = url.pathname;
+    const admin = path === '/admin' || path.startsWith('/api/admin/');
+    let cors = {};
+    let response;
     try {
-      // 2. Health check route
-      if (url.pathname === '/' || url.pathname === '/api/health') {
-        return jsonResponse({
-          status: 'ok',
-          service: 'TC-Block Community YouTube Blocker API',
-          timestamp: new Date().toISOString(),
-        });
+      if (request.url.length > 2048) fail('URL quá dài', 414);
+      checkTransport(request, env, admin);
+      if (!['GET', 'POST', 'OPTIONS'].includes(request.method)) fail('API không tồn tại', 404);
+      if (!admin && !['/', '/api/health', '/api/blocked', '/api/reports'].includes(path)) fail('API không tồn tại', 404);
+      await ingress(request, env, admin || path === '/api/reports');
+      if (path === '/api/reports') {
+        const origin = reportOrigin(request, env);
+        if (origin) cors = { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
+      } else if (!admin) cors = { 'Access-Control-Allow-Origin': '*' };
+      if (request.method === 'OPTIONS') {
+        if (admin) fail('Không hỗ trợ truy cập quản trị khác origin', 403);
+        const expected = path === '/api/reports' ? 'POST' : 'GET';
+        if (request.headers.get('Access-Control-Request-Method') !== expected) fail('Preflight không hợp lệ', 405);
+        response = new Response(null, { status: 204, headers: {
+          'Access-Control-Allow-Methods': expected, 'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+          'Access-Control-Max-Age': '600', 'Cache-Control': 'no-store',
+        } });
+      } else if (admin) {
+        checkAdminMutation(request);
+        const actor = await authenticateAdmin(request, env, path === '/admin');
+        if (path === '/admin' && request.method === 'GET') {
+          queryKeys(url, []);
+          const nonce = crypto.randomUUID().replaceAll('-', '');
+          response = new Response(renderAdminPage(nonce, localMode(request, env)), { headers: {
+            'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
+            'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
+          } });
+        } else {
+          if (!env.DB) fail('Dịch vụ chưa sẵn sàng', 503);
+          response = await adminApi(request, env, url, actor);
+        }
+      } else if (request.method === 'GET' && ['/', '/api/health'].includes(path)) {
+        queryKeys(url, []);
+        response = json({ success: !!env.DB, status: env.DB ? 'ok' : 'unavailable' }, env.DB ? 200 : 503);
+      } else {
+        if (!env.DB) fail('Dịch vụ chưa sẵn sàng', 503);
+        if (path === '/api/reports' && request.method === 'POST') response = await submitReport(request, env, url);
+        else if (path === '/api/blocked' && request.method === 'GET') response = await publicList(request, env, url, ctx);
+        else fail('API không tồn tại', 404);
       }
-
-      // 3. API: POST /api/reports - Tiếp nhận báo cáo và đưa kênh vào danh sách chặn
-      if (method === 'POST' && url.pathname === '/api/reports') {
-        let body;
-        try {
-          body = await request.json();
-        } catch (e) {
-          return jsonResponse({ success: false, error: 'Dữ liệu JSON không hợp lệ' }, 400);
-        }
-
-        const { channel_name, channel_url, reason } = body;
-        const channel_handle = normalizeHandle(body.channel_handle);
-
-        if (!channel_handle || channel_handle.length < 2) {
-          return jsonResponse({ success: false, error: 'Thiếu hoặc sai định dạng channel_handle (ví dụ: @kenh-xau)' }, 400);
-        }
-
-        if (!reason || reason.trim().length === 0) {
-          return jsonResponse({ success: false, error: 'Lý do báo cáo không được để trống' }, 400);
-        }
-
-        const finalName = (channel_name || channel_handle).trim();
-        const finalUrl = (channel_url || `https://www.youtube.com/${channel_handle}`).trim();
-        const finalReason = reason.trim();
-
-        // Lấy IP người gửi để tạo hash bảo mật chống spam
-        const clientIp = request.headers.get('cf-connecting-ip') || request.headers.get('x-forwarded-for') || '127.0.0.1';
-
-        // Thực thi truy vấn D1 Database
-        if (env && env.DB) {
-          // Lưu vào lịch sử reports
-          await env.DB.prepare(
-            `INSERT INTO reports (channel_handle, channel_name, reason, reporter_ip_hash, created_at)
-             VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)`
-          ).bind(channel_handle, finalName, finalReason, clientIp).run();
-
-          // Upsert vào blocked_channels
-          await env.DB.prepare(
-            `INSERT INTO blocked_channels (channel_handle, channel_name, channel_url, reason, report_count, status, updated_at)
-             VALUES (?, ?, ?, ?, 1, 'active', CURRENT_TIMESTAMP)
-             ON CONFLICT(channel_handle) DO UPDATE SET
-               report_count = report_count + 1,
-               channel_name = excluded.channel_name,
-               reason = excluded.reason,
-               status = 'active',
-               updated_at = CURRENT_TIMESTAMP`
-          ).bind(channel_handle, finalName, finalUrl, finalReason).run();
-        }
-
-        return jsonResponse({
-          success: true,
-          message: `Đã ghi nhận báo cáo và thêm kênh ${channel_handle} vào danh sách chặn cộng đồng`,
-          data: {
-            channel_handle,
-            channel_name: finalName,
-            channel_url: finalUrl,
-            reason: finalReason,
-            reported_at: new Date().toISOString(),
-          },
-        }, 201);
-      }
-
-      // 4. API: GET /api/blocked - Lấy danh sách toàn bộ kênh đang bị chặn
-      if (method === 'GET' && url.pathname === '/api/blocked') {
-        let blockedList = [];
-
-        if (env && env.DB) {
-          const { results } = await env.DB.prepare(
-            `SELECT channel_handle, channel_name, channel_url, reason, report_count, created_at, updated_at
-             FROM blocked_channels
-             WHERE status = 'active'
-             ORDER BY updated_at DESC`
-          ).all();
-
-          blockedList = results || [];
-        }
-
-        return jsonResponse({
-          success: true,
-          count: blockedList.length,
-          updated_at: new Date().toISOString(),
-          data: blockedList,
-        }, 200, {
-          'Cache-Control': 'public, max-age=30, s-maxage=60',
-        });
-      }
-
-      // 5. API: DELETE /api/blocked/:handle - Gỡ chặn một kênh
-      if (method === 'DELETE' && url.pathname.startsWith('/api/blocked/')) {
-        const rawHandle = decodeURIComponent(url.pathname.replace('/api/blocked/', ''));
-        const channel_handle = normalizeHandle(rawHandle);
-
-        if (!channel_handle) {
-          return jsonResponse({ success: false, error: 'Thiếu channel_handle cần gỡ chặn' }, 400);
-        }
-
-        if (env && env.DB) {
-          await env.DB.prepare(
-            `UPDATE blocked_channels SET status = 'inactive', updated_at = CURRENT_TIMESTAMP WHERE channel_handle = ?`
-          ).bind(channel_handle).run();
-        }
-
-        return jsonResponse({
-          success: true,
-          message: `Đã gỡ chặn kênh ${channel_handle} khỏi danh sách chặn`,
-          channel_handle,
-        });
-      }
-
-      // 6. 404 Not Found
-      return jsonResponse({ success: false, error: 'API endpoint không tồn tại' }, 404);
-
     } catch (err) {
-      return jsonResponse({
-        success: false,
-        error: 'Lỗi máy chủ nội bộ',
-        detail: err.message,
-      }, 500);
+      const known = err instanceof HttpError;
+      if (!known) console.error(JSON.stringify({ event: 'internal_error', request_id: requestId, area: admin ? 'admin' : 'public' }));
+      response = json({ success: false, error: known ? err.message : 'Lỗi máy chủ nội bộ', request_id: requestId }, known ? err.status : 500,
+        known && err.retryAfter ? { 'Retry-After': String(err.retryAfter) } : {});
     }
+    const headers = new Headers({ ...securityHeaders(request), ...cors });
+    for (const [key, value] of response.headers) headers.set(key, value);
+    headers.set('X-Request-Id', requestId);
+    return new Response(response.body, { status: response.status, headers });
   },
 };

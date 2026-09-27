@@ -1,0 +1,4 @@
+# Prefer: npm run setup:local (generates a random key without overwriting existing config).
+# Local bypass only works for loopback HTTP URLs. Never enable this on deployment.
+LOCAL_DEV=true
+ADMIN_TOKEN=replace-with-at-least-32-random-characters

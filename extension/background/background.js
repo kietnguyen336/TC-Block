@@ -1,273 +1,208 @@
-/**
- * TC-Block Extension Service Worker (Manifest V3)
- * Xử lý đồng bộ danh sách kênh bị chặn với Backend Cloudflare Worker,
- * quản lý bộ nhớ đệm (Cache) và điều phối tin nhắn giữa Content Scripts và Popup.
- */
-
+// Local choices and approved community data are stored separately for each API.
 const DEFAULT_API_URL = 'http://localhost:8787';
 const SYNC_ALARM_NAME = 'tc_block_sync_alarm';
-const SYNC_INTERVAL_MINUTES = 10;
-
-// Lấy URL API hiện tại từ cấu hình lưu trữ
-async function getApiUrl() {
-  const result = await chrome.storage.local.get(['tc_api_url']);
-  return result.tc_api_url || DEFAULT_API_URL;
+let serial = Promise.resolve();
+function enqueue(task) {
+  const result = serial.then(task);
+  serial = result.catch(() => {});
+  return result;
 }
-
-// Lấy bản đồ danh sách kênh bị chặn từ storage local
-async function getBlockedMap() {
-  const result = await chrome.storage.local.get(['tc_blocked_channels']);
-  return result.tc_blocked_channels || {};
+function normalizeChannel(value) {
+  if (typeof value !== 'string') return '';
+  const clean = value.trim().normalize('NFC');
+  if (/^UC[A-Za-z0-9_-]{22}$/.test(clean)) return clean;
+  const handle = clean.startsWith('@') ? clean : '@' + clean;
+  return /^@[\p{L}\p{M}\p{N}_.-]{1,100}$/u.test(handle) ? handle.toLowerCase() : '';
 }
-
-// Lưu bản đồ kênh bị chặn vào storage local
-async function saveBlockedMap(map) {
-  await chrome.storage.local.set({
-    tc_blocked_channels: map,
-    tc_last_sync_time: new Date().toISOString(),
+function validateUrl(value) {
+  const url = new URL(value);
+  const local = ['localhost', '127.0.0.1'].includes(url.hostname) && url.port === '8787' && url.protocol === 'http:';
+  const worker = url.protocol === 'https:' && url.hostname.endsWith('.workers.dev');
+  if ((!local && !worker) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('Dùng URL gốc https://*.workers.dev hoặc http://localhost:8787');
+  }
+  return url.origin;
+}
+function emptyScope() { return { personal: {}, allowed: {}, community: {}, pending: {}, token: '', lastSync: null, syncError: '' }; }
+async function loadState() {
+  const saved = await chrome.storage.local.get(['tc_state_v2', 'tc_api_url']);
+  if (saved.tc_state_v2) return saved.tc_state_v2;
+  let apiUrl = DEFAULT_API_URL;
+  try { apiUrl = validateUrl(saved.tc_api_url || DEFAULT_API_URL); } catch {}
+  // Keep old cache in its original key for recovery. It cannot establish approval.
+  return { apiUrl, scopes: { [apiUrl]: emptyScope() } };
+}
+function scopeOf(state) { return state.scopes[state.apiUrl] ||= emptyScope(); }
+function effective(scope) {
+  const map = {};
+  for (const [key, value] of Object.entries(scope.community)) map[key] = { ...value, source: 'community' };
+  for (const [key, value] of Object.entries(scope.personal)) map[key] = { ...value, source: 'personal', report_status: scope.pending[key]?.status || 'sent' };
+  for (const key of Object.keys(scope.allowed)) delete map[key];
+  return map;
+}
+async function save(state) { await chrome.storage.local.set({ tc_state_v2: state }); }
+async function broadcast(state) {
+  const channels = effective(scopeOf(state));
+  const tabs = await chrome.tabs.query({ url: '*://*.youtube.com/*' });
+  await Promise.all(tabs.filter(t => t.id).map(tab => chrome.tabs.sendMessage(tab.id, { action: 'BLOCKLIST_UPDATED', channels }).catch(() => {})));
+}
+async function publish(state) { await save(state); await broadcast(state); }
+async function api(state, path, body) {
+  const scope = scopeOf(state);
+  const response = await fetch(state.apiUrl + path, {
+    method: body ? 'POST' : 'GET', signal: AbortSignal.timeout(10000), redirect: 'error', cache: 'no-store',
+    headers: { ...(body ? { 'Content-Type': 'application/json' } : {}), ...(body && scope.token ? { Authorization: 'Bearer ' + scope.token } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
-}
-
-// Phát tin nhắn đến tất cả các tab YouTube đang mở
-async function broadcastToYouTubeTabs(messagePayload) {
+  const reader = response.body.getReader();
+  const chunks = []; let size = 0;
   try {
-    const tabs = await chrome.tabs.query({ url: '*://*.youtube.com/*' });
-    for (const tab of tabs) {
-      if (tab.id) {
-        chrome.tabs.sendMessage(tab.id, messagePayload).catch(() => {
-          // Bỏ qua lỗi nếu tab chưa load xong content script
-        });
-      }
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 4 * 1024 * 1024) throw new Error('Phản hồi API vượt giới hạn');
+      chunks.push(value);
     }
-  } catch (e) {
-    console.warn('[TC-Block] Không thể phát tin nhắn tới các tab:', e);
-  }
-}
-
-// Đồng bộ danh sách kênh bị chặn từ Backend Cloudflare Worker
-async function syncBlockedChannels() {
-  try {
-    const apiUrl = await getApiUrl();
-    const endpoint = `${apiUrl.replace(/\/+$/, '')}/api/blocked`;
-
-    const response = await fetch(endpoint, {
-      method: 'GET',
-      headers: { 'Accept': 'application/json' },
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP error ${response.status}`);
-    }
-
-    const json = await response.json();
-    if (!json.success || !Array.isArray(json.data)) {
-      throw new Error('Dữ liệu API trả về không đúng cấu trúc');
-    }
-
-    // Chuyển mảng kênh thành Map dạng { [handle]: channelInfo }
-    const newMap = {};
-    for (const item of json.data) {
-      if (item.channel_handle) {
-        const handle = item.channel_handle.toLowerCase();
-        newMap[handle] = {
-          channel_handle: handle,
-          channel_name: item.channel_name || handle,
-          channel_url: item.channel_url || `https://www.youtube.com/${handle}`,
-          reason: item.reason || 'Bị cộng đồng báo cáo',
-          report_count: item.report_count || 1,
-          updated_at: item.updated_at || new Date().toISOString(),
-        };
-      }
-    }
-
-    await saveBlockedMap(newMap);
-    console.log(`[TC-Block] Đã đồng bộ thành công ${Object.keys(newMap).length} kênh bị chặn.`);
-
-    // Thông báo cho các tab YouTube cập nhật và ẩn kênh
-    broadcastToYouTubeTabs({
-      action: 'BLOCKLIST_UPDATED',
-      channels: newMap,
-    });
-
-    return { success: true, count: Object.keys(newMap).length, channels: newMap };
-  } catch (err) {
-    console.error('[TC-Block] Lỗi khi đồng bộ từ server:', err);
-    return { success: false, error: err.message };
-  }
-}
-
-// Gửi báo cáo kênh mới lên server và cập nhật cache tức thì
-async function submitReport(reportData) {
-  try {
-    const apiUrl = await getApiUrl();
-    const endpoint = `${apiUrl.replace(/\/+$/, '')}/api/reports`;
-
-    let cleanHandle = (reportData.channel_handle || '').trim().toLowerCase();
-    if (!cleanHandle.startsWith('@')) {
-      cleanHandle = '@' + cleanHandle;
-    }
-
-    const payload = {
-      channel_handle: cleanHandle,
-      channel_name: reportData.channel_name || cleanHandle,
-      channel_url: reportData.channel_url || `https://www.youtube.com/${cleanHandle}`,
-      reason: reportData.reason || 'Nội dung không phù hợp',
-    };
-
-    // 1. Cập nhật ngay vào cache local để người dùng thấy kết quả tức thì
-    const currentMap = await getBlockedMap();
-    currentMap[cleanHandle] = {
-      ...payload,
-      report_count: (currentMap[cleanHandle]?.report_count || 0) + 1,
-      updated_at: new Date().toISOString(),
-    };
-    await saveBlockedMap(currentMap);
-
-    // 2. Báo cho tất cả các tab YouTube ẩn kênh này ngay lập tức
-    broadcastToYouTubeTabs({
-      action: 'CHANNEL_BLOCKED_EVENT',
-      channel: currentMap[cleanHandle],
-      channels: currentMap,
-    });
-
-    // 3. Gửi lên Cloudflare Worker API
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        console.warn(`[TC-Block] API trả về status ${res.status}, dữ liệu đã được lưu tạm tại local.`);
-      }
-    } catch (networkErr) {
-      console.warn('[TC-Block] Không thể kết nối tới Backend API, đã lưu chặn cục bộ:', networkErr);
-    }
-
-    return { success: true, data: currentMap[cleanHandle] };
-  } catch (err) {
-    console.error('[TC-Block] Lỗi submitReport:', err);
-    return { success: false, error: err.message };
-  }
-}
-
-// Gỡ chặn một kênh
-async function unblockChannel(channelHandle) {
-  try {
-    const cleanHandle = (channelHandle || '').trim().toLowerCase();
-    const currentMap = await getBlockedMap();
-
-    if (currentMap[cleanHandle]) {
-      delete currentMap[cleanHandle];
-      await saveBlockedMap(currentMap);
-    }
-
-    // Báo cho các tab cập nhật lại
-    broadcastToYouTubeTabs({
-      action: 'BLOCKLIST_UPDATED',
-      channels: currentMap,
-    });
-
-    // Gọi API xóa phía backend
-    try {
-      const apiUrl = await getApiUrl();
-      const endpoint = `${apiUrl.replace(/\/+$/, '')}/api/blocked/${encodeURIComponent(cleanHandle)}`;
-      await fetch(endpoint, { method: 'DELETE' });
-    } catch (e) {
-      console.warn('[TC-Block] Lỗi gọi API xóa kênh:', e);
-    }
-
-    return { success: true, handle: cleanHandle };
-  } catch (err) {
-    return { success: false, error: err.message };
-  }
-}
-
-// Khởi tạo Alarm định kỳ
-function setupSyncAlarm() {
-  chrome.alarms.create(SYNC_ALARM_NAME, {
-    periodInMinutes: SYNC_INTERVAL_MINUTES,
+  } finally { reader.cancel().catch(() => {}); }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  const data = JSON.parse(new TextDecoder().decode(bytes));
+  if (!response.ok || !data.success) throw Object.assign(new Error(data.error || `HTTP ${response.status}`), {
+    status: response.status, retryAfter: Math.min(86400, Math.max(60, Number(response.headers.get('Retry-After')) || 60)),
   });
+  return data;
 }
-
-// Lắng nghe sự kiện cài đặt và khởi động
-chrome.runtime.onInstalled.addListener(() => {
-  console.log('[TC-Block] Tiện ích đã được cài đặt.');
-  setupSyncAlarm();
-  syncBlockedChannels();
-});
-
-chrome.runtime.onStartup.addListener(() => {
-  setupSyncAlarm();
-  syncBlockedChannels();
-});
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === SYNC_ALARM_NAME) {
-    syncBlockedChannels();
+async function flushReports(state, onlyHandle) {
+  const scope = scopeOf(state);
+  if (scope.reportRetryAt > Date.now()) return;
+  let attempts = 0;
+  for (const [handle, entry] of Object.entries(scope.pending)) {
+    if ((onlyHandle && handle !== onlyHandle) || entry.status === 'failed') continue;
+    if (!scope.token) { entry.error = 'Thêm mã báo cáo trong cài đặt để gửi cộng đồng'; break; }
+    if (++attempts > 5) break;
+    try { await api(state, '/api/reports', entry.payload); delete scope.pending[handle]; }
+    catch (err) {
+      entry.error = err.message;
+      if (err.status === 429) scope.reportRetryAt = Date.now() + err.retryAfter * 1000;
+      if (err.status === 400 || err.status === 413) entry.status = 'failed';
+      else break;
+    }
   }
-});
-
-// Điều phối tin nhắn Message Passing
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const action = message?.action;
-
-  if (action === 'GET_BLOCKED_CHANNELS') {
-    (async () => {
-      const channels = await getBlockedMap();
-      const apiUrl = await getApiUrl();
-      const meta = await chrome.storage.local.get(['tc_last_sync_time', 'tc_hidden_count']);
-      sendResponse({
-        success: true,
-        channels,
-        apiUrl,
-        lastSyncTime: meta.tc_last_sync_time,
-        hiddenCount: meta.tc_hidden_count || 0,
-      });
-    })();
-    return true; // Cho biết sẽ phản hồi bất đồng bộ (async)
+  await save(state);
+}
+async function sync(state) {
+  const scope = scopeOf(state);
+  await flushReports(state);
+  try {
+    const community = {};
+    let cursor = null; let revision;
+    const seen = new Set();
+    for (let page = 0; page < 100; page++) {
+      const path = cursor ? `/api/blocked?cursor=${encodeURIComponent(cursor)}&revision=${revision}` : '/api/blocked';
+      const data = await api(state, path);
+      if (!Array.isArray(data.data) || data.data.length > 500 || !Number.isSafeInteger(data.revision) || data.revision < 0) throw new Error('Danh sách cộng đồng không hợp lệ');
+      if (revision !== undefined && revision !== data.revision) throw new Error('Danh sách đã đổi; vui lòng đồng bộ lại');
+      revision = data.revision;
+      for (const item of data.data) {
+        const handle = normalizeChannel(item.channel_handle);
+        if (!handle || typeof item.channel_name !== 'string' || item.channel_name.length > 200 || typeof item.reason !== 'string' || item.reason.length > 2000) throw new Error('Thông tin kênh không hợp lệ');
+        community[handle] = { channel_handle: handle, channel_name: item.channel_name, reason: item.reason };
+      }
+      cursor = data.next_cursor;
+      if (cursor === null) break;
+      if (typeof cursor !== 'string' || normalizeChannel(cursor) !== cursor || seen.has(cursor) || page === 99) throw new Error('Phân trang API không hợp lệ');
+      seen.add(cursor);
+    }
+    scope.community = community;
+    scope.lastSync = new Date().toISOString(); scope.syncError = '';
+    await publish(state);
+    return { success: true, channels: effective(scope), pendingCount: Object.keys(scope.pending).length };
+  } catch (err) {
+    scope.syncError = err.message; await save(state);
+    return { success: false, error: err.message };
   }
-
-  if (action === 'SUBMIT_REPORT') {
-    (async () => {
-      const res = await submitReport(message.data);
-      sendResponse(res);
-    })();
-    return true;
+}
+async function handleMessage(message, sender) {
+  if (!message || typeof message.action !== 'string') throw new Error('Thông điệp không hợp lệ');
+  const popup = sender.url === chrome.runtime.getURL('popup/popup.html');
+  let youtube = false;
+  try { const url = new URL(sender.url); youtube = url.protocol === 'https:' && (url.hostname === 'youtube.com' || url.hostname.endsWith('.youtube.com')); } catch {}
+  if (!popup && (!youtube || !['GET_BLOCKED_CHANNELS', 'SUBMIT_REPORT', 'INCREMENT_HIDDEN_COUNT'].includes(message.action))) throw new Error('Nguồn thông điệp không được phép');
+  const state = await loadState();
+  const scope = scopeOf(state);
+  if (['GET_SETTINGS', 'SET_SETTINGS'].includes(message.action) && !popup) {
+    throw new Error('Chỉ thay đổi cài đặt từ popup');
   }
-
-  if (action === 'UNBLOCK_CHANNEL') {
-    (async () => {
-      const res = await unblockChannel(message.handle);
-      sendResponse(res);
-    })();
-    return true;
-  }
-
-  if (action === 'FORCE_SYNC') {
-    (async () => {
-      const res = await syncBlockedChannels();
-      sendResponse(res);
-    })();
-    return true;
-  }
-
-  if (action === 'SET_API_URL') {
-    (async () => {
-      await chrome.storage.local.set({ tc_api_url: message.url });
-      const syncRes = await syncBlockedChannels();
-      sendResponse({ success: true, syncRes });
-    })();
-    return true;
-  }
-
-  if (action === 'INCREMENT_HIDDEN_COUNT') {
-    (async () => {
+  switch (message.action) {
+    case 'GET_BLOCKED_CHANNELS': {
+      const stats = await chrome.storage.local.get(['tc_hidden_count']);
+      return { success: true, channels: effective(scope), apiUrl: state.apiUrl, lastSyncTime: scope.lastSync,
+        syncError: scope.syncError, pendingCount: Object.keys(scope.pending).length,
+        pendingError: Object.values(scope.pending).find(p => p.error)?.error || '', hiddenCount: stats.tc_hidden_count || 0,
+        allowed: scope.allowed };
+    }
+    case 'GET_SETTINGS': return { success: true, apiUrl: state.apiUrl, hasToken: !!scope.token };
+    case 'SET_SETTINGS': {
+      const nextUrl = validateUrl(message.url);
+      state.apiUrl = nextUrl;
+      const next = scopeOf(state);
+      if (message.clearToken) next.token = '';
+      else if (typeof message.token === 'string' && message.token.trim()) {
+        next.token = message.token.trim();
+        if (next.token.length > 512) throw new Error('Mã báo cáo quá dài');
+        next.reportRetryAt = 0;
+        for (const p of Object.values(next.pending)) { p.status = 'queued'; p.error = ''; }
+      }
+      await publish(state);
+      const syncRes = await sync(state);
+      return { success: true, syncRes };
+    }
+    case 'SUBMIT_REPORT': {
+      const input = message.data || {};
+      const handle = normalizeChannel(input.channel_handle);
+      if (!handle || typeof input.reason !== 'string' || !input.reason.trim() || input.reason.trim().length > 2000) throw new Error('Kênh hoặc lý do không hợp lệ');
+      const payload = { channel_handle: handle, channel_name: String(input.channel_name || handle).slice(0, 200), reason: input.reason.trim() };
+      if (!scope.personal[handle] && Object.keys(scope.personal).length >= 5000) throw new Error('Đã đạt giới hạn 5000 kênh chặn riêng');
+      scope.personal[handle] = payload; delete scope.allowed[handle];
+      scope.pending[handle] = { payload, status: 'queued', error: '' };
+      await publish(state); // Hide immediately, before network access.
+      await flushReports(state, handle);
+      return { success: true, queued: !!scope.pending[handle], error: scope.pending[handle]?.error, data: payload };
+    }
+    case 'UNBLOCK_CHANNEL': {
+      const handle = normalizeChannel(message.handle);
+      if (!handle) throw new Error('Kênh không hợp lệ');
+      scope.allowed[handle] = scope.personal[handle] || scope.community[handle] || { channel_handle: handle, channel_name: handle };
+      delete scope.personal[handle]; delete scope.pending[handle];
+      await publish(state);
+      return { success: true }; // Never calls the community moderation API.
+    }
+    case 'REMOVE_EXCEPTION': {
+      const handle = normalizeChannel(message.handle);
+      if (!handle) throw new Error('Kênh không hợp lệ');
+      delete scope.allowed[handle]; await publish(state); return { success: true };
+    }
+    case 'FORCE_SYNC': return sync(state);
+    case 'INCREMENT_HIDDEN_COUNT': {
       const data = await chrome.storage.local.get(['tc_hidden_count']);
-      const current = (data.tc_hidden_count || 0) + (message.delta || 1);
-      await chrome.storage.local.set({ tc_hidden_count: current });
-      sendResponse({ success: true, count: current });
-    })();
-    return true;
+      const count = (data.tc_hidden_count || 0) + 1;
+      await chrome.storage.local.set({ tc_hidden_count: count }); return { success: true, count };
+    }
+    default: throw new Error('Thao tác không hợp lệ');
   }
+}
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  enqueue(() => handleMessage(message, sender)).then(sendResponse, error => sendResponse({ success: false, error: error.message }));
+  return true;
+});
+function initialize() {
+  chrome.storage.local.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' });
+  chrome.alarms.create(SYNC_ALARM_NAME, { periodInMinutes: 10 });
+  enqueue(async () => sync(await loadState())).catch(console.error);
+}
+chrome.runtime.onInstalled.addListener(initialize);
+chrome.runtime.onStartup.addListener(initialize);
+chrome.alarms.onAlarm.addListener(alarm => {
+  if (alarm.name === SYNC_ALARM_NAME) enqueue(async () => sync(await loadState())).catch(console.error);
 });

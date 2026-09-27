@@ -30,10 +30,10 @@
     if (!href) return null;
     try {
       const url = new URL(href, window.location.origin);
-      const pathname = url.pathname;
+      const pathname = decodeURIComponent(url.pathname).normalize('NFC');
 
       // Dạng 1: /@handle (ví dụ: /@toxicchannel)
-      const handleMatch = pathname.match(/\/(@[A-Za-z0-9_.-]+)/);
+      const handleMatch = pathname.match(/^\/(@[\p{L}\p{M}\p{N}_.-]+)(?:\/|$)/u);
       if (handleMatch) {
         return handleMatch[1].toLowerCase();
       }
@@ -41,7 +41,7 @@
       // Dạng 2: /channel/UC...
       const channelMatch = pathname.match(/\/channel\/([A-Za-z0-9_-]+)/);
       if (channelMatch) {
-        return channelMatch[1].toLowerCase();
+        return channelMatch[1];
       }
 
       // Dạng 3: /c/CustomName hoặc /user/UserName
@@ -91,10 +91,12 @@
 
   // 1. Module Lọc và Ẩn Thẻ Video Trên YouTube
   function filterAndProcessCard(card) {
-    if (card.hasAttribute('data-tc-processed')) return;
-
     const info = extractChannelInfoFromCard(card);
     if (!info) return;
+
+    if (card.getAttribute('data-tc-handle') !== info.channel_handle) {
+      card.querySelector('.tc-card-report-btn')?.remove();
+    }
 
     // Đánh dấu đã quét thông tin
     card.setAttribute('data-tc-processed', 'true');
@@ -102,14 +104,17 @@
 
     // Kiểm tra xem kênh có nằm trong danh sách chặn không
     if (blockedChannelsMap[info.channel_handle]) {
+      const newlyHidden = !card.classList.contains('tc-channel-blocked');
       card.classList.add('tc-channel-blocked');
       card.setAttribute('data-tc-blocked', 'true');
 
       // Tăng biến đếm thống kê
-      chrome.runtime.sendMessage({ action: 'INCREMENT_HIDDEN_COUNT', delta: 1 }).catch(() => {});
+      if (newlyHidden) chrome.runtime.sendMessage({ action: 'INCREMENT_HIDDEN_COUNT', delta: 1 }).catch(() => {});
       return;
     }
 
+    card.classList.remove('tc-channel-blocked', 'tc-channel-fading');
+    card.removeAttribute('data-tc-blocked');
     // Nếu không bị chặn, inject nút Báo cáo nhanh lên thẻ video (nếu chưa có)
     injectCardReportButton(card, info);
   }
@@ -182,7 +187,7 @@
     btn.className = 'tc-injected-report-btn tc-watch-report-btn';
     btn.type = 'button';
     btn.innerHTML = `${ICONS.shieldAlert} <span>Báo cáo Kênh</span>`;
-    btn.title = `Báo cáo và thêm kênh ${name} vào danh sách chặn cộng đồng`;
+    btn.title = `Báo cáo kênh ${name} và chặn riêng cho bạn`;
 
     btn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -563,7 +568,7 @@
               </div>
               <div>
                 <h2 class="tc-title">Báo Cáo & Chặn Kênh</h2>
-                <p class="tc-subtitle">Áp dụng cho bạn và cộng đồng người dùng TC-Block</p>
+                <p class="tc-subtitle">Chặn riêng ngay. Chỉ chặn cộng đồng sau khi được duyệt.</p>
               </div>
             </div>
             <button class="tc-close-btn" id="closeBtn" title="Đóng">
@@ -588,7 +593,8 @@
             </div>
 
             <label class="tc-label" for="reasonInput">Lý do chi tiết</label>
-            <textarea class="tc-textarea" id="reasonInput" placeholder="Nhập lý do muốn báo cáo và chặn kênh này..."></textarea>
+            <textarea class="tc-textarea" id="reasonInput" maxlength="2000" placeholder="Nhập lý do muốn báo cáo và chặn kênh này..."></textarea>
+            <p id="reportError" role="alert"></p>
           </div>
 
           <div class="tc-footer">
@@ -655,6 +661,12 @@
           reason: reason,
         },
       }, (res) => {
+        if (chrome.runtime.lastError || !res?.success) {
+          shadow.getElementById('reportError').textContent = res?.error || 'Không thể lưu báo cáo. Vui lòng thử lại.';
+          submitBtn.disabled = false;
+          submitBtn.textContent = 'Thử lại';
+          return;
+        }
         closeModal();
 
         // Cập nhật bộ nhớ cục bộ và ẩn ngay lập tức
@@ -667,17 +679,18 @@
         hideVideosOfChannel(channelInfo.channel_handle);
 
         // Hiển thị Toast thông báo thành công
-        showSuccessToast(channelInfo);
+        showSuccessToast(channelInfo, res);
       });
     });
   }
 
   // Ẩn ngay lập tức các video của một kênh cụ thể
   function hideVideosOfChannel(channelHandle) {
-    const cards = document.querySelectorAll(`[data-tc-handle="${channelHandle}"]`);
+    const cards = document.querySelectorAll(`[data-tc-handle="${CSS.escape(channelHandle)}"]`);
     cards.forEach(card => {
       card.classList.add('tc-channel-fading');
       setTimeout(() => {
+        if (!blockedChannelsMap[channelHandle] || card.getAttribute('data-tc-handle') !== channelHandle) return;
         card.classList.remove('tc-channel-fading');
         card.classList.add('tc-channel-blocked');
         card.setAttribute('data-tc-blocked', 'true');
@@ -686,7 +699,7 @@
   }
 
   // Hiển thị Toast thông báo phong cách Material Design (Trắng & Đỏ hồng, không emoji)
-  function showSuccessToast(channelInfo) {
+  function showSuccessToast(channelInfo, result) {
     const existing = document.getElementById('tc-toast-host');
     if (existing) existing.remove();
 
@@ -757,8 +770,8 @@
           ${ICONS.check}
         </div>
         <div class="tc-toast-content">
-          Đã báo cáo và chặn kênh <span class="tc-toast-bold">${escapeHTML(channelInfo.channel_name)}</span>.
-          <br>Các video của kênh sẽ không còn hiển thị.
+          Đã chặn riêng kênh <span class="tc-toast-bold">${escapeHTML(channelInfo.channel_name)}</span>.
+          <br>${result?.queued ? 'Báo cáo chưa gửi. Mở popup để xem trạng thái và thử lại.' : 'Đã gửi báo cáo. Chặn cộng đồng cần quản trị viên duyệt.'}
         </div>
       </div>
     `;
@@ -824,6 +837,7 @@
 
     // Lắng nghe điều hướng SPA của YouTube
     window.addEventListener('yt-navigate-finish', () => {
+      document.querySelectorAll('.tc-watch-report-btn, .tc-channel-header-btn').forEach(btn => btn.remove());
       scheduleScan();
     });
 

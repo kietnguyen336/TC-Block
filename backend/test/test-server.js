@@ -1,212 +1,80 @@
-/**
- * Test Suite cho TC-Block Backend Cloudflare Worker API
- */
+import assert from 'node:assert/strict';
+import vm from 'node:vm';
+import worker, { normalizeChannel } from '../src/index.js';
+import { adminPage } from '../src/admin.js';
+import { createD1 } from './d1.js';
 
-import assert from 'node:assert';
-import worker from '../src/index.js';
-
-// Tạo Mock D1 Database in-memory để kiểm thử
-function createMockD1() {
-  const reports = [];
-  const blockedChannels = new Map();
-
-  return {
-    prepare(query) {
-      const exec = (...args) => ({
-        async run() {
-          const q = query.trim().toUpperCase();
-          if (q.startsWith('INSERT INTO REPORTS')) {
-            const [channel_handle, channel_name, reason, ip] = args;
-            reports.push({ channel_handle, channel_name, reason, ip, created_at: new Date().toISOString() });
-            return { success: true };
-          }
-          if (q.startsWith('INSERT INTO BLOCKED_CHANNELS')) {
-            const [channel_handle, channel_name, channel_url, reason] = args;
-            const existing = blockedChannels.get(channel_handle);
-            if (existing) {
-              existing.report_count += 1;
-              existing.reason = reason;
-              existing.channel_name = channel_name;
-              existing.status = 'active';
-              existing.updated_at = new Date().toISOString();
-            } else {
-              blockedChannels.set(channel_handle, {
-                id: blockedChannels.size + 1,
-                channel_handle,
-                channel_name,
-                channel_url,
-                reason,
-                report_count: 1,
-                status: 'active',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              });
-            }
-            return { success: true };
-          }
-          if (q.startsWith('UPDATE BLOCKED_CHANNELS')) {
-            const [channel_handle] = args;
-            const existing = blockedChannels.get(channel_handle);
-            if (existing) {
-              existing.status = 'inactive';
-              existing.updated_at = new Date().toISOString();
-            }
-            return { success: true };
-          }
-          return { success: true };
-        },
-        async all() {
-          const q = query.trim().toUpperCase();
-          if (q.includes('FROM BLOCKED_CHANNELS')) {
-            const results = Array.from(blockedChannels.values())
-              .filter(c => c.status === 'active')
-              .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
-            return { results };
-          }
-          return { results: [] };
-        },
-      });
-
-      return {
-        bind(...args) {
-          return exec(...args);
-        },
-        run(...args) {
-          return exec(...args).run();
-        },
-        all(...args) {
-          return exec(...args).all();
-        },
-      };
-    },
-    _getReports: () => reports,
-    _getBlocked: () => blockedChannels,
-  };
+const DB = createD1();
+const env = { DB, LOCAL_DEV: 'true', ADMIN_TOKEN: 'test-only-admin-secret-at-least-32-characters' };
+async function call(path, method = 'GET', body, token = '') {
+  const response = await worker.fetch(new Request('http://localhost:8787' + path, {
+    method, headers: { 'Content-Type': 'application/json', Origin: 'http://localhost:8787', 'X-TC-Admin-Action': '1', ...(token ? { Authorization: 'Bearer ' + token } : {}) },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  }), env);
+  return { status: response.status, ...(await response.json()) };
 }
-
-async function runTests() {
-  console.log('🧪 Bắt đầu kiểm thử TC-Block Backend Cloudflare Worker API...\n');
-
-  const mockDb = createMockD1();
-  const env = { DB: mockDb };
-
-  // Test 1: OPTIONS CORS Preflight
-  {
-    console.log('Test 1: OPTIONS CORS Preflight');
-    const req = new Request('http://localhost:8787/api/reports', { method: 'OPTIONS' });
-    const res = await worker.fetch(req, env);
-    assert.strictEqual(res.status, 204);
-    assert.strictEqual(res.headers.get('Access-Control-Allow-Origin'), '*');
-    console.log('  ✅ Pass: CORS Preflight trả về 204 và headers đầy đủ');
-  }
-
-  // Test 2: GET /api/health
-  {
-    console.log('Test 2: GET /api/health');
-    const req = new Request('http://localhost:8787/api/health');
-    const res = await worker.fetch(req, env);
-    assert.strictEqual(res.status, 200);
-    const data = await res.json();
-    assert.strictEqual(data.status, 'ok');
-    console.log('  ✅ Pass: Health check thành công');
-  }
-
-  // Test 3: POST /api/reports - Validate lỗi thiếu trường
-  {
-    console.log('Test 3: POST /api/reports validation');
-    const req = new Request('http://localhost:8787/api/reports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ channel_handle: '', reason: '' }),
-    });
-    const res = await worker.fetch(req, env);
-    assert.strictEqual(res.status, 400);
-    const data = await res.json();
-    assert.strictEqual(data.success, false);
-    console.log('  ✅ Pass: Báo lỗi 400 khi thiếu thông tin bắt buộc');
-  }
-
-  // Test 4: POST /api/reports - Báo cáo kênh mới hợp lệ
-  {
-    console.log('Test 4: POST /api/reports - Báo cáo kênh thành công');
-    const req = new Request('http://localhost:8787/api/reports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        channel_handle: 'ToxicChannel123',
-        channel_name: 'Kênh Giật Gân',
-        reason: 'Nội dung phản cảm, sai sự thật',
-      }),
-    });
-    const res = await worker.fetch(req, env);
-    assert.strictEqual(res.status, 201);
-    const data = await res.json();
-    assert.strictEqual(data.success, true);
-    assert.strictEqual(data.data.channel_handle, '@toxicchannel123'); // Đã chuẩn hóa chữ thường và thêm @
-    console.log('  ✅ Pass: Ghi nhận báo cáo và chuẩn hóa handle chuẩn xác');
-  }
-
-  // Test 5: GET /api/blocked - Lấy danh sách kênh bị chặn
-  {
-    console.log('Test 5: GET /api/blocked');
-    const req = new Request('http://localhost:8787/api/blocked');
-    const res = await worker.fetch(req, env);
-    assert.strictEqual(res.status, 200);
-    const data = await res.json();
-    assert.strictEqual(data.success, true);
-    assert.strictEqual(data.count, 1);
-    assert.strictEqual(data.data[0].channel_handle, '@toxicchannel123');
-    console.log('  ✅ Pass: Lấy danh sách chặn thành công (1 kênh)');
-  }
-
-  // Test 6: POST /api/reports - Báo cáo trùng kênh (Upsert tăng lượt)
-  {
-    console.log('Test 6: POST /api/reports trùng kênh (Tăng lượt report)');
-    const req = new Request('http://localhost:8787/api/reports', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        channel_handle: '@toxicchannel123',
-        channel_name: 'Kênh Giật Gân Cập Nhật',
-        reason: 'Lừa đảo tài chính',
-      }),
-    });
-    const res = await worker.fetch(req, env);
-    assert.strictEqual(res.status, 201);
-
-    // Kiểm tra danh sách lại
-    const reqGet = new Request('http://localhost:8787/api/blocked');
-    const resGet = await worker.fetch(reqGet, env);
-    const dataGet = await resGet.json();
-    assert.strictEqual(dataGet.count, 1);
-    assert.strictEqual(dataGet.data[0].report_count, 2);
-    assert.strictEqual(dataGet.data[0].reason, 'Lừa đảo tài chính');
-    console.log('  ✅ Pass: Tăng số lượt report và cập nhật lý do mới nhất');
-  }
-
-  // Test 7: DELETE /api/blocked/:handle - Gỡ chặn kênh
-  {
-    console.log('Test 7: DELETE /api/blocked/:handle');
-    const req = new Request('http://localhost:8787/api/blocked/@toxicchannel123', {
-      method: 'DELETE',
-    });
-    const res = await worker.fetch(req, env);
-    assert.strictEqual(res.status, 200);
-    const data = await res.json();
-    assert.strictEqual(data.success, true);
-
-    // Kiểm tra danh sách sau khi gỡ
-    const reqGet = new Request('http://localhost:8787/api/blocked');
-    const resGet = await worker.fetch(reqGet, env);
-    const dataGet = await resGet.json();
-    assert.strictEqual(dataGet.count, 0); // Đã chuyển thành inactive
-    console.log('  ✅ Pass: Gỡ chặn thành công, kênh không còn trong danh sách active');
-  }
-
-  console.log('\n🎉 TOÀN BỘ CÁC BÀI TEST BACKEND API ĐÃ PASS 100%!');
+const admin = (path, method = 'GET', body) => call('/api/admin/' + path, method, body, env.ADMIN_TOKEN);
+const payload = { channel_handle: '@TestChannel', channel_name: 'Test Channel', reason: 'Spam videos' };
+assert.equal((await call('/api/admin/channels')).status, 401);
+assert.equal((await call('/api/reports', 'POST', payload)).status, 401);
+assert.equal((await call('/api/blocked/@testchannel', 'DELETE')).status, 404);
+const people = [];
+for (let i = 0; i < 6; i++) people.push(await admin('reporters', 'POST', { label: 'Person ' + i }));
+const report = (i, data = payload) => call('/api/reports', 'POST', data, people[i].token);
+assert.equal((await report(0)).status, 201);
+for (let i = 0; i < 5; i++) assert.equal((await report(0)).duplicate, true);
+assert.equal((await admin('channels')).data[0].recent_reports, 1);
+assert.equal((await call('/api/blocked')).count, 0);
+for (let i = 1; i < 5; i++) await report(i);
+let queue = (await admin('channels')).data[0];
+assert.equal(queue.recent_reports, 5);
+assert.equal(queue.priority, true);
+assert.equal(queue.status, 'pending');
+assert.equal((await call('/api/blocked')).count, 0, 'Five votes never auto-approve');
+DB.sqlite.prepare("UPDATE community_reports SET created_at = datetime('now', '-31 days') WHERE reporter_id = ?").run(people[0].id);
+await report(0);
+assert.equal((await admin('channels')).data[0].recent_reports, 4, 'Retry cannot refresh expired vote');
+assert.equal((await admin('channels')).data[0].priority, false);
+assert.equal((await report(5)).data.recent_reports, 5);
+const evidence = await admin('reports/%40testchannel');
+assert.equal(evidence.data.length, 6);
+assert.equal(evidence.data.filter(r => r.eligible).length, 5);
+assert.equal((await call('/api/admin/channels/%40testchannel', 'POST', {status:'approved',note:'Reviewed'}, people[0].token)).status, 401);
+assert.equal((await admin('channels/%40testchannel', 'POST', {status:'approved',note:''})).status, 400);
+assert.equal((await admin('channels/%40testchannel', 'POST', {status:'approved',note:'Reviewed spam evidence'})).success, true);
+let blocked = await call('/api/blocked');
+assert.equal(blocked.count, 1);
+assert.equal(blocked.data[0].reason, 'Reviewed spam evidence');
+await admin('channels/%40testchannel', 'POST', {status:'rejected',note:'Decision corrected'});
+assert.equal((await call('/api/blocked')).count, 0);
+await report(1);
+assert.equal((await admin('channels?status=rejected')).data[0].status, 'rejected');
+assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM moderation_events').get().n, 2);
+await admin('reporters/' + people[1].id + '/revoke', 'POST', {});
+assert.equal((await report(1)).status, 401);
+assert.equal((await admin('channels?status=rejected')).data[0].recent_reports, 4);
+for (const bad of [null, [], { ...payload, reason: 1 }, { ...payload, channel_handle: {} }, { ...payload, reason: 'x'.repeat(2001) }]) {
+  assert.equal((await report(2, bad)).status, 400);
 }
-
-runTests().catch(err => {
-  console.error('❌ Test thất bại:', err);
-  process.exit(1);
-});
+assert.equal(normalizeChannel('UCabcdefghijklmnopqrstuv'), 'UCabcdefghijklmnopqrstuv');
+assert.equal(normalizeChannel('@TiếngViệt'), '@tiếngviệt');
+for (let i = 0; i < 19; i++) assert.equal((await report(2, {...payload,channel_handle:'@spam' + i})).status, 201);
+assert.equal((await report(2, {...payload,channel_handle:'@overlimit'})).status, 429);
+assert.equal((await report(2)).duplicate, true, 'Duplicate retry works even at quota');
+const concurrentPerson = await admin('reporters', 'POST', {label:'Concurrent reporter'});
+const burst = await Promise.all(Array.from({length:25}, (_, i) => call('/api/reports', 'POST', {
+  ...payload, channel_handle:'@burst' + i,
+}, concurrentPerson.token)));
+assert.equal(burst.filter(r => r.status === 201).length, 20, 'Quota must hold for overlapping requests');
+assert.equal(burst.filter(r => r.status === 429).length, 5);
+assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM moderation_channels WHERE channel_handle LIKE '@burst%'").get().n, 20, 'Rejected requests must not create empty review entries');
+assert.equal((await worker.fetch(new Request('https://test/api/blocked'), {})).status, 503);
+assert.equal((await worker.fetch(new Request('https://test/api/admin/channels'), {DB})).status, 503);
+const listed = await admin('reporters');
+assert.equal(JSON.stringify(listed).includes('token_hash'), false);
+assert.equal(DB.sqlite.prepare('SELECT token_hash FROM reporters WHERE id = ?').get(people[0].id).token_hash.length, 64);
+assert.equal(DB.sqlite.prepare('SELECT token_hash FROM reporters WHERE id = ?').get(people[0].id).token_hash === people[0].token, false);
+// Parse the actual inline admin script, including escapes in the HTML template.
+new vm.Script(adminPage.match(/<script>([\s\S]*?)<\/script>/)[1]);
+DB.sqlite.close();
+console.log('PASS backend: authorization, distinct votes, rolling window, approval/rejection, revocation, validation, quota, SQL and admin script');

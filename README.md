@@ -1,152 +1,101 @@
-# TC-Block: Tiện Ích Báo Cáo & Chặn Kênh YouTube Dùng Chung Cho Cộng Đồng
+# TC-Block
 
-**TC-Block** là một giải pháp kết hợp giữa **Chrome Extension (Manifest V3)** và **Cloudflare Workers (Edge Serverless + D1 Database)**, cho phép người dùng báo cáo các kênh YouTube rác, tin giả, độc hại, giật gân hoặc vi phạm bản quyền trực tiếp trên giao diện YouTube. Danh sách các kênh bị chặn được đồng bộ tự động và dùng chung cho toàn bộ cộng đồng người cài tiện ích.
+Extension Chrome Manifest V3 lọc kênh YouTube bằng lựa chọn cá nhân và danh sách cộng đồng do quản trị viên duyệt. Backend chạy trên Cloudflare Workers + D1; giao diện dùng HTML/CSS/JavaScript thuần.
 
----
+## Quy tắc bản đầu
 
-## 🌟 Tính Năng Nổi Bật
+- Báo cáo một kênh sẽ chặn ngay cho riêng người gửi.
+- Chỉ báo cáo có mã người tham gia hợp lệ mới được ghi nhận trên server. Mỗi người chỉ tính **một phiếu cho mỗi kênh**, kể cả gửi lại.
+- **5 người hợp lệ trong 30 ngày gần nhất** đưa kênh lên mức ưu tiên duyệt, **không tự động chặn cộng đồng**. Quản trị viên có thể duyệt cả kênh dưới ngưỡng khi đã kiểm tra bằng chứng.
+- Chỉ kênh ở trạng thái `approved` được phát hành qua danh sách cộng đồng.
+- Từ chối hoặc gỡ chặn chung không xóa lựa chọn chặn riêng của người dùng. Báo cáo tiếp theo không tự mở lại quyết định đã từ chối.
+- “Vẫn hiện kênh này” tạo ngoại lệ cá nhân, không gọi API gỡ chặn cộng đồng. “Bỏ ngoại lệ” áp dụng lại danh sách cộng đồng nếu kênh vẫn nằm trong đó.
+- Báo cáo lặp không làm mới thời điểm phiếu. Phiếu quá 30 ngày vẫn được lưu để xem xét nhưng không tính ưu tiên.
 
-1. **Inject Nút Báo Cáo Tại 3 Vị Trí Trên YouTube**:
-   - **Góc thẻ video**: Icon cờ báo cáo nhanh trên thumbnail/thẻ video ở Trang chủ, Tìm kiếm, Cột đề xuất bên phải.
-   - **Trang xem video (`/watch`)**: Nút "Báo cáo Kênh" viền đỏ hồng Material Design nằm ngay cạnh nút Đăng Ký (Subscribe) của chủ kênh.
-   - **Trang chủ kênh (`/@handle`)**: Nút báo cáo nằm cạnh nút Subscribe ở header kênh.
+## Người báo cáo và chống lạm dụng
 
-2. **Hộp Thoại Báo Cáo Chuẩn Material Design (Shadow DOM)**:
-   - Sử dụng **Shadow DOM** giúp giao diện modal độc lập 100%, không bị ảnh hưởng bởi CSS của YouTube.
-   - Hiệu ứng **Blur** nền và animation mượt mà (`backdrop-filter: blur(10px)`).
-   - Chip chọn nhanh các lý do phổ biến: *Giật gân, câu view*, *Lừa đảo, tin giả*, *Độc hại, phản cảm*, *Spam, bản quyền*.
-   - Ô nhập chi tiết lý do kèm đếm ký tự.
-   - **100% không sử dụng emoji**, dùng toàn bộ biểu tượng vector SVG Material Design sắc nét.
+Bản đầu dành cho nhóm người tham gia được quản trị viên xác minh và cấp mã. Một mã đại diện một người; quản trị viên phải tránh cấp nhiều mã cho cùng một người. Đây chưa phải hệ thống xác minh danh tính tự động và không thể ngăn việc chia sẻ mã hoặc thông đồng.
 
-3. **Cơ Chế Ẩn Video Siêu Mượt**:
-   - Sử dụng `MutationObserver` kết hợp **Debounce 40ms** và `requestAnimationFrame`.
-   - Video của kênh bị chặn sẽ biến mất ngay lập tức với hiệu ứng fade-out nhẹ, giữ trải nghiệm YouTube luôn mượt mà 60 FPS.
+Trang `/admin` có chức năng cấp/đổi/thu hồi mã, xem lý do của từng báo cáo, duyệt/từ chối kênh và nhập lý do quyết định. Mã ngẫu nhiên 256 bit có hạn 90 ngày, database chỉ lưu SHA-256. Đổi mã giữ nguyên người tham gia và phiếu cũ. IP do Cloudflare cung cấp được hash để giới hạn lưu lượng, không lưu IP vào database. Mã bị thu hồi không gửi được báo cáo; phiếu của người bị thu hồi không tính ưu tiên. Hết hạn mã không xóa phiếu đã gửi hợp lệ trước đó.
 
-4. **Đồng Bộ Dùng Chung (Cloudflare Workers & D1 Database)**:
-   - Chỉ cần 1 người báo cáo kênh, kênh đó sẽ được lưu vào cơ sở dữ liệu Edge Cloud và lập tức ẩn đối với tất cả người dùng khác cài extension.
-   - Extension tự động cập nhật ngầm định kỳ qua `chrome.alarms` và lưu cache cục bộ trong `chrome.storage.local`.
+Mỗi mã được báo cáo tối đa 20 kênh mới trong 24 giờ. Người chưa có mã vẫn chặn riêng; báo cáo được giữ trên máy để gửi khi thêm mã.
 
-5. **Popup Quản Lý Tiện Ích**:
-   - Thống kê: Số kênh đã chặn & Số video đã ẩn trong phiên.
-   - Tìm kiếm tức thì danh sách kênh hoặc lý do.
-   - Nút gỡ chặn từng kênh.
-   - Nút cưỡng chế đồng bộ ngay từ server.
-   - Cấu hình linh hoạt URL API (chuyển đổi giữa localhost và production).
+## Chạy local
 
----
+Cần Node.js 24 và npm. Đọc [SECURITY.md](SECURITY.md) trước khi public backend.
 
-## 📁 Cấu Trúc Dự Án
+Trong thư mục `backend`:
 
-```
-TC-Block/
-├── backend/
-│   ├── package.json               # Cấu hình dự án backend
-│   ├── wrangler.toml              # Cấu hình Cloudflare Worker & D1 binding
-│   ├── schema.sql                 # SQL schema bảng blocked_channels & reports
-│   ├── src/
-│   │   └── index.js               # Handler API REST (CORS, POST /api/reports, GET /api/blocked, DELETE)
-│   └── test/
-│       └── test-server.js         # Unit test backend
-├── extension/
-│   ├── manifest.json              # Khai báo Chrome Extension Manifest V3
-│   ├── background/
-│   │   └── background.js          # Service Worker: sync API, local cache, message router
-│   ├── content/
-│   │   ├── content.js             # Quét DOM YouTube, inject button & modal Shadow DOM
-│   │   └── content.css            # CSS Material Design trên YouTube
-│   ├── popup/
-│   │   ├── popup.html             # Giao diện Popup Material Design
-│   │   ├── popup.css              # Styling trắng & đỏ hồng nhạt, blur, không emoji
-│   │   └── popup.js               # Logic tìm kiếm, thống kê, unblock, trigger sync
-│   ├── icons/                     # Bộ icon 16x16, 48x48, 128x128
-│   └── test/                      # Bộ test kiểm thử Extension
-├── scripts/
-│   └── verify-all.js              # Script kiểm thử E2E tích hợp toàn diện
-└── docs/                          # Bản thiết kế kỹ thuật (Spec) và Kế hoạch (Plan)
+```powershell
+npm ci
+npm run setup:local
 ```
 
----
+Lệnh setup tạo `.dev.vars` với khóa local ngẫu nhiên và không ghi đè file đã có. Khóa này chỉ có hiệu lực trên loopback HTTP, không dùng cho production. Sau đó khởi tạo schema và chạy Worker:
 
-## 🚀 Hướng Dẫn Cài Đặt & Sử Dụng
+```powershell
+npx wrangler d1 execute tc-block-db --local --file=./schema.sql
+npm run dev
+```
 
-### Bước 1: Cài đặt Extension vào Trình duyệt (Chrome / Cốc Cốc / Edge / Brave)
+1. Mở `http://localhost:8787/admin`, nhập `ADMIN_TOKEN` để vào trang quản trị.
+2. Cấp mã cho từng người tham gia đã xác minh.
+3. Mở `chrome://extensions`, bật Developer mode, chọn **Load unpacked** và chọn thư mục `extension` của dự án.
+4. Trong popup, mở cài đặt, nhập URL `http://localhost:8787` và mã báo cáo cá nhân, bấm **Lưu**. Không nhập khóa quản trị vào extension.
+5. Mở YouTube, báo cáo kênh. Trên trang quản trị, xem lý do và duyệt; các máy khác nhận danh sách ở lần đồng bộ tiếp theo hoặc khi bấm đồng bộ.
 
-1. Mở trình duyệt và truy cập vào đường dẫn tiện ích:
-   - Google Chrome / Cốc Cốc / Brave: `chrome://extensions/`
-   - Microsoft Edge: `edge://extensions/`
-2. Bật công tắc **Developer mode (Chế độ dành cho nhà phát triển)** ở góc trên bên phải.
-3. Bấm vào nút **Load unpacked (Tải tiện ích đã giải nén)**.
-4. Chọn thư mục:
-   ```
-   C:\Users\zodic\Desktop\TC-Block\extension
-   ```
-5. Tiện ích **TC-Block** sẽ xuất hiện trên thanh công cụ trình duyệt. Bấm ghim (Pin) icon tiện ích để dễ dàng theo dõi.
+## Triển khai Cloudflare
 
----
+Trong thư mục `backend`:
 
-### Bước 2: Chạy Backend Cloudflare Worker
+```powershell
+npx wrangler login
+npx wrangler d1 create tc-block-db
+```
 
-Bạn có thể chạy thử cục bộ trên máy tính hoặc triển khai lên đám mây Cloudflare miễn phí:
+Cập nhật `database_id` thật và các biến trong `wrangler.toml` theo [hướng dẫn bảo mật](SECURITY.md#cấu-hình-production): `API_ORIGIN`, `ADMIN_ORIGIN`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS`, `EXTENSION_IDS`. Giữ `LOCAL_DEV = "false"`. Tạo ứng dụng Cloudflare Access bảo vệ hostname quản trị, giới hạn đúng quản trị viên và yêu cầu MFA ở nhà cung cấp danh tính. Sau đó:
 
-#### Cách A: Chạy Cục Bộ (Local Development)
-1. Mở Terminal tại thư mục `backend`:
-   ```bash
-   cd c:\Users\zodic\Desktop\TC-Block\backend
-   npm install
-   ```
-2. Khởi chạy server Cloudflare Worker giả lập:
-   ```bash
-   npx wrangler dev
-   ```
-   Worker sẽ lắng nghe tại `http://localhost:8787`. Mặc định Extension đã được cấu hình sẵn để kết nối tới địa chỉ này.
+```powershell
+npx wrangler d1 execute tc-block-db --remote --file=./schema.sql
+npm run check
+npm run deploy
+```
 
-#### Cách B: Triển Khai Lên Cloudflare Workers (Miễn Phí)
-1. Đăng nhập tài khoản Cloudflare qua CLI:
-   ```bash
-   npx wrangler login
-   ```
-2. Tạo cơ sở dữ liệu D1 Database trên Cloudflare:
-   ```bash
-   npx wrangler d1 create tc-block-db
-   ```
-   *(Copy `database_id` được in ra và cập nhật vào file `wrangler.toml`)*
-3. Chạy migration tạo bảng dữ liệu:
-   ```bash
-   npx wrangler d1 execute tc-block-db --file=./schema.sql
-   ```
-4. Triển khai API lên Cloudflare toàn cầu:
-   ```bash
-   npx wrangler deploy
-   ```
-5. Sau khi deploy xong, bạn sẽ nhận được một đường link dạng:
-   `https://tc-block-api.<your-subdomain>.workers.dev`
-6. Mở Popup của Extension -> Bấm icon bánh răng cài đặt -> Dán link API của bạn vào và bấm **Lưu**. Tất cả các máy tính cài extension của bạn sẽ đồng bộ chung qua link này!
+Mở `ADMIN_ORIGIN/admin` để đăng nhập Cloudflare Access, cấu hình `API_ORIGIN` trong extension. Khóa `ADMIN_TOKEN` cũ không cấp quyền quản trị public. Thiếu Access hoặc binding bảo vệ sẽ bị từ chối, không tự giảm mức bảo mật. Hiện extension hỗ trợ API HTTPS `*.workers.dev` và HTTP `localhost:8787` / `127.0.0.1:8787`; API dùng domain riêng cần cập nhật manifest và kiểm tra URL trong background. Domain quản trị riêng không cần thêm vào extension.
 
----
+## Dữ liệu và đồng bộ
 
-## 🧪 Chạy Kiểm Thử (Automated Tests)
+- `reporters`: người tham gia, hash mã và trạng thái hoạt động.
+- `reporter_credentials`: ngày hết hạn mã báo cáo.
+- `community_reports`: một phiếu cho mỗi cặp người/kênh, lý do và thời điểm gửi.
+- `moderation_channels`: kênh chờ duyệt / đã duyệt / từ chối.
+- `moderation_events`: lịch sử quyết định và lý do của quản trị viên.
+- `security_audit`: ai cấp/đổi/thu hồi mã hoặc thay đổi quyết định (Access subject, không ghi token).
+- `public_state`: phiên bản danh sách chặn để đồng bộ nhiều trang nhất quán.
+- `chrome.storage.local.tc_state_v2`: chặn riêng, ngoại lệ, cache cộng đồng, báo cáo chưa gửi và cấu hình; tách theo URL API.
 
-Dự án đi kèm bộ test tự động toàn diện bao gồm cả kiểm tra quy tắc không dùng emoji và kiểm thử E2E:
+Danh sách cộng đồng đồng bộ mỗi 10 phút, lúc khởi động hoặc khi bấm đồng bộ; public cache có thể trễ tối đa 60 giây. API trả 500 kênh/trang và extension chỉ thay cache khi tải đủ các trang cùng phiên bản (tối đa 100 trang). Chặn riêng và ngoại lệ được giữ qua các lần đồng bộ. Mất mạng hoặc mã không hợp lệ sẽ giữ báo cáo để thử lại; popup hiển thị lỗi. Extension tuân thủ `Retry-After`, gửi tối đa 5 báo cáo chờ mỗi lần đồng bộ và giới hạn kích thước phản hồi. Khi đổi máy chủ, mã và báo cáo của máy chủ cũ không chuyển sang máy chủ mới.
 
-1. **Chạy kiểm thử toàn diện E2E**:
-   ```bash
-   node scripts/verify-all.js
-   ```
+## Nâng cấp từ bản cũ
 
-2. **Chạy kiểm thử từng phần**:
-   ```bash
-   node backend/test/test-server.js
-   node extension/test/test-manifest.js
-   node extension/test/test-dom-filter.js
-   node extension/test/test-content-script.js
-   node extension/test/test-popup.js
-   ```
+Chạy lại `schema.sql` cho D1 đang dùng trước khi nâng cấp Worker; lệnh có thể chạy lặp lại. Các bảng mới tách khỏi `blocked_channels` / `reports` cũ và không xóa dữ liệu cũ. Dữ liệu cũ chưa có danh tính người báo cáo hoặc quyết định duyệt nên **không tự đưa vào danh sách cộng đồng mới**; có thể xem lại thủ công khi cần.
 
----
+Nếu đã dùng bản có duyệt nhưng chưa có bảo mật mới: **đổi mã cho từng người tham gia hiện có** trên `/admin`. Mã không có ngày hết hạn bị từ chối; đổi mã giữ nguyên danh tính và phiếu. Không cấp thêm một người mới để thay mã cũ. Backend và extension cần nâng cấp cùng nhau vì API danh sách đã có phân trang.
 
-## 🎨 Quy Chuẩn Thiết Kế
+Cache cũ `tc_blocked_channels` được giữ nguyên để khôi phục thủ công, nhưng không dùng làm danh sách mới vì không phân biệt được lựa chọn cá nhân và chặn chung. Cần báo cáo lại các kênh muốn chặn riêng. Reload extension và tải lại các tab YouTube sau khi nâng cấp để content script mới có hiệu lực.
 
-- **Phong cách**: Material Design 3 (Google).
-- **Màu sắc**: Nền Trắng tinh khiết (`#FFFFFF`), Điểm nhấn Đỏ hồng nhạt đặc trưng của YouTube (`#FFF0F2`, `#FFD0D6`, `#CC0000`).
-- **Hiệu ứng**: Blur mượt mà (`backdrop-filter: blur(10px)`), viền bo tròn 16px - 20px, đổ bóng mềm mại.
-- **Biểu tượng**: 100% sử dụng icon vector SVG Material Design sắc nét, **hoàn toàn không dùng emoji**.
+## Kiểm thử
+
+Từ thư mục gốc:
+
+```powershell
+node scripts/verify-all.js
+npm run check --prefix backend
+npm audit --prefix backend --audit-level=high
+```
+
+Bộ kiểm thử gồm 9 suite: SQL sản phẩm trên SQLite, API, background/content script với fixture Chrome/DOM, luồng cộng đồng và các trường hợp tấn công. Có kiểm tra JWT ký RSA thật với JWKS giả lập, JWT giả/sai audience/hết hạn, CSRF, rate limit trước database, body quá dài/chậm, mã hết hạn/đổi/thu hồi, giới hạn báo cáo đồng thời, phân trang/cache và lỗi mạng. CI chạy test, dependency audit và build dry-run với các GitHub Action ghim theo commit.
+
+Đã smoke-test riêng trên runtime workerd và D1 local qua Wrangler; CI vẫn dùng SQLite adapter. Chưa phải E2E trên Chrome/YouTube thật, Access policy hoặc D1 production. Cần kiểm tra thủ công các trang chủ, tìm kiếm, trang xem video và trang kênh sau khi cài extension. Bộ chọn DOM phụ thuộc giao diện YouTube. URL handle và URL channel ID chưa được hợp nhất thành một danh tính kênh duy nhất; báo cáo qua hai dạng có thể tách phiếu. Các URL cũ `/c/` và `/user/` chỉ được xử lý theo tên, chưa có bước phân giải chính thức.
+
+Các bản thiết kế cũ trong `docs/superpowers` là lịch sử; quy tắc hiện hành nằm trong README này và mã nguồn.

@@ -14,6 +14,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsPanel = document.getElementById('settingsPanel');
   const apiUrlInput = document.getElementById('apiUrlInput');
   const saveApiBtn = document.getElementById('saveApiBtn');
+  const reporterToken = document.getElementById('reporterToken');
+  const clearToken = document.getElementById('clearToken');
+  const pendingStatus = document.getElementById('pendingStatus');
+  const allowedList = document.getElementById('allowedList');
   const blockedCountEl = document.getElementById('blockedCount');
   const hiddenCountEl = document.getElementById('hiddenCount');
   const searchInput = document.getElementById('searchInput');
@@ -34,7 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // 1. Tải dữ liệu ban đầu từ Service Worker
   function loadData() {
     chrome.runtime.sendMessage({ action: 'GET_BLOCKED_CHANNELS' }, (res) => {
-      if (chrome.runtime.lastError || !res) {
+      if (chrome.runtime.lastError || !res?.success) {
         statusText.textContent = 'Mất kết nối';
         statusPill.style.background = '#FCE8E6';
         statusPill.querySelector('.tc-status-dot').style.background = '#D93025';
@@ -43,6 +47,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
       channelsData = res.channels || {};
       apiUrlInput.value = res.apiUrl || 'http://localhost:8787';
+      statusText.textContent = res.syncError ? 'Đồng bộ lỗi' : res.lastSyncTime ? 'Đã đồng bộ' : 'Chưa đồng bộ';
+      pendingStatus.textContent = res.pendingCount ? `${res.pendingCount} báo cáo chưa gửi. ${res.pendingError || 'Bấm đồng bộ để thử lại.'}` : 'Chỉ các kênh được duyệt mới bị chặn cộng đồng.';
+      allowedList.replaceChildren();
+      Object.values(res.allowed || {}).forEach(channel => {
+        const row = document.createElement('div');
+        row.className = 'tc-channel-item';
+        const label = document.createElement('span');
+        label.textContent = channel.channel_name || channel.channel_handle;
+        const button = document.createElement('button');
+        button.textContent = 'Bỏ ngoại lệ';
+        button.addEventListener('click', () => chrome.runtime.sendMessage({ action: 'REMOVE_EXCEPTION', handle: channel.channel_handle }, reply => {
+          if (chrome.runtime.lastError || !reply?.success) { pendingStatus.textContent = 'Không thể bỏ ngoại lệ'; return; }
+          loadData();
+        }));
+        row.append(label, button); allowedList.append(row);
+      });
+      chrome.runtime.sendMessage({ action: 'GET_SETTINGS' }, settings => {
+        if (chrome.runtime.lastError || !settings?.success) return;
+        document.getElementById('tokenHelp').textContent = settings.hasToken ? 'Đã lưu mã báo cáo cho máy chủ này.' : 'Chưa có mã: báo cáo được giữ trên máy cho đến khi thêm mã.';
+      });
 
       // Cập nhật thống kê
       const totalBlocked = Object.keys(channelsData).length;
@@ -99,9 +123,10 @@ document.addEventListener('DOMContentLoaded', () => {
               <span class="tc-item-handle">${escapeHTML(channel.channel_handle)}</span>
             </div>
             <div class="tc-item-reason" title="${escapeHTML(channel.reason)}">${escapeHTML(channel.reason)}</div>
+            <small>${channel.source === 'personal' ? 'Chặn riêng' : 'Cộng đồng đã duyệt'}</small>
           </div>
         </div>
-        <button class="tc-unblock-btn" title="Gỡ chặn kênh này" data-handle="${escapeHTML(channel.channel_handle)}">
+        <button class="tc-unblock-btn" title="Vẫn hiện kênh này (chỉ cho bạn)" aria-label="Vẫn hiện kênh này (chỉ cho bạn)" data-handle="${escapeHTML(channel.channel_handle)}">
           ${SVG_TRASH}
         </button>
       `;
@@ -124,12 +149,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     chrome.runtime.sendMessage({ action: 'UNBLOCK_CHANNEL', handle }, (res) => {
       if (res && res.success) {
-        delete channelsData[handle.toLowerCase()];
+        delete channelsData[handle];
         blockedCountEl.textContent = Object.keys(channelsData).length;
         element.style.transform = 'translateX(20px)';
         element.style.transition = 'all 0.2s ease';
         setTimeout(() => {
-          renderList();
+          loadData();
         }, 200);
       } else {
         element.style.opacity = '1';
@@ -151,13 +176,15 @@ document.addEventListener('DOMContentLoaded', () => {
     statusText.textContent = 'Đang đồng bộ...';
 
     chrome.runtime.sendMessage({ action: 'FORCE_SYNC' }, (res) => {
+      const failed = chrome.runtime.lastError || !res?.success;
       setTimeout(() => {
         syncIcon.classList.remove('spinning');
-        statusText.textContent = 'Đã kết nối';
+        statusText.textContent = failed ? 'Đồng bộ thất bại' : 'Đã đồng bộ';
+        if (failed) pendingStatus.textContent = res?.error || 'Không thể kết nối';
         if (res && res.success) {
           channelsData = res.channels || {};
           blockedCountEl.textContent = Object.keys(channelsData).length;
-          renderList();
+          loadData();
         }
       }, 400);
     });
@@ -175,7 +202,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!newUrl) return;
 
     saveApiBtn.textContent = 'Đang lưu...';
-    chrome.runtime.sendMessage({ action: 'SET_API_URL', url: newUrl }, (res) => {
+    chrome.runtime.sendMessage({ action: 'SET_SETTINGS', url: newUrl, token: reporterToken.value, clearToken: clearToken.checked }, (res) => {
+      if (chrome.runtime.lastError || !res?.success) {
+        saveApiBtn.textContent = 'Lưu';
+        pendingStatus.textContent = res?.error || 'Không thể lưu cài đặt';
+        return;
+      }
+      reporterToken.value = ''; clearToken.checked = false;
       saveApiBtn.textContent = 'Đã lưu';
       setTimeout(() => {
         saveApiBtn.textContent = 'Lưu';

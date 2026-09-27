@@ -20,7 +20,7 @@
           <h1 class="tc-app-title">TC-Block</h1>
           <div class="tc-status-pill" id="statusPill">
             <span class="tc-status-dot"></span>
-            <span class="tc-status-text" id="statusText">Đã kết nối</span>
+            <span class="tc-status-text" id="statusText">Đang tải...</span>
           </div>
         </div>
       </div>
@@ -74,7 +74,12 @@
         <button class="tc-btn-small" id="saveApiBtn">Lưu</button>
       </div>
       <div class="tc-settings-help">Điền URL Cloudflare Worker khi deploy chính thức (hoặc giữ nguyên localhost khi chạy thử).</div>
+      <label for="reporterToken">Mã báo cáo do quản trị viên cấp</label>
+      <input type="password" class="tc-input" id="reporterToken" autocomplete="off" placeholder="Để trống để giữ mã hiện tại">
+      <label><input type="checkbox" id="clearToken"> Xóa mã đã lưu</label>
+      <div class="tc-settings-help" id="tokenHelp">Chưa có mã vẫn chặn riêng được. Mã chỉ dùng cho máy chủ tương ứng.</div>
     </section>
+    <p class="tc-settings-help" id="pendingStatus" role="status"></p>
 
     <!-- Thanh tìm kiếm -->
     <div class="tc-search-box">
@@ -88,6 +93,7 @@
     <main class="tc-list-container" id="listContainer">
       <!-- Items sẽ được render bằng Javascript -->
     </main>
+    <details><summary>Ngoại lệ: kênh vẫn hiện</summary><div id="allowedList"></div></details>
 
     <!-- Trạng thái trống (Empty State) -->
     <div class="tc-empty-state" id="emptyState" style="display: none;">
