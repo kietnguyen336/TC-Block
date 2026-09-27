@@ -60,10 +60,13 @@ body {
 .tc-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .tc-header-actions { display: flex; align-items: center; }
 .tc-icon-btn {
-  display: grid;
-  place-items: center;
-  width: 38px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: auto;
   height: 38px;
+  padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 12px;
   color: #52525b;
@@ -71,8 +74,10 @@ body {
   cursor: pointer;
   transition: 150ms ease;
 }
+.tc-icon-btn span { font-size: 13px; font-weight: 750; white-space: nowrap; }
 .tc-icon-btn:hover { color: var(--tc-accent); background: var(--tc-accent-soft); border-color: #ffd4de; }
 .tc-icon-btn:active { transform: scale(0.94); }
+.tc-icon-btn:disabled { cursor: wait; opacity: 0.6; }
 .tc-icon-svg { width: 19px; height: 19px; fill: currentColor; }
 
 .tc-overview {

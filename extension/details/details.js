@@ -156,14 +156,16 @@ document.addEventListener('DOMContentLoaded', () => {
     renderList();
   });
 
-  // 5. Nút Đồng bộ ngay từ Cloudflare Worker
+  // 5. The only remote sync entry point: an explicit user click.
   syncBtn.addEventListener('click', () => {
+    syncBtn.disabled = true;
     syncIcon.classList.add('spinning');
     statusText.textContent = 'Syncing...';
 
     chrome.runtime.sendMessage({ action: 'FORCE_SYNC' }, (res) => {
       const failed = chrome.runtime.lastError || !res?.success;
       setTimeout(() => {
+        syncBtn.disabled = false;
         syncIcon.classList.remove('spinning');
         statusText.textContent = failed ? 'Sync failed' : 'Synced';
         if (failed) pendingStatus.textContent = res?.error || 'Could not connect.';
@@ -186,9 +188,6 @@ document.addEventListener('DOMContentLoaded', () => {
       .replace(/'/g, '&#039;');
   }
 
-  // Khởi động
+  // Load the local cache only. Opening this page must not contact the backend.
   loadData();
-  chrome.runtime.sendMessage({ action: 'FORCE_SYNC' }, () => {
-    if (!chrome.runtime.lastError) loadData();
-  });
 });

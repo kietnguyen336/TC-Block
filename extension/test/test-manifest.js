@@ -24,7 +24,7 @@ function testManifest() {
   assert.ok(manifest.name, 'Extension phải có tên');
   assert.ok(manifest.version, 'Extension phải có phiên bản');
   assert.ok(manifest.permissions.includes('storage'), 'Cần quyền storage');
-  assert.ok(manifest.permissions.includes('alarms'), 'Cần quyền alarms');
+  assert.ok(!manifest.permissions.includes('alarms'), 'Đồng bộ thủ công không được yêu cầu quyền alarms');
   console.log('  [PASS] Cau truc manifest.json hop le chuan MV3');
 
   // 3. Kiểm tra file icons
@@ -43,6 +43,9 @@ function testManifest() {
   assert.ok(swRel, 'Phải khai báo background.service_worker');
   const swPath = path.join(extDir, swRel);
   assert.ok(fs.existsSync(swPath), `File Service Worker ${swRel} phải tồn tại`);
+  const swSource = fs.readFileSync(swPath, 'utf8');
+  assert.ok(!swSource.includes('chrome.alarms'), 'Service Worker không được tự đồng bộ bằng alarm');
+  assert.ok(!swSource.includes('onStartup.addListener'), 'Khởi động trình duyệt không được tự đồng bộ');
   console.log('  [PASS] File Service Worker background.js ton tai');
 
   // 5. Kiểm tra host_permissions

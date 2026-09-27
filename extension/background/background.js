@@ -1,6 +1,5 @@
 // Production builds are pinned to one backend. The endpoint is not user-editable.
 const DEFAULT_API_URL = 'https://tc-block-api.kietnguyen336.workers.dev';
-const SYNC_ALARM_NAME = 'tc_block_sync_alarm';
 const REPORTER_REFRESH_WINDOW_SECONDS = 7 * 86400;
 let serial = Promise.resolve();
 function enqueue(task) {
@@ -209,11 +208,5 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 function initialize() {
   chrome.storage.local.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' });
-  chrome.alarms.create(SYNC_ALARM_NAME, { periodInMinutes: 10 });
-  enqueue(async () => sync(await loadState())).catch(console.error);
 }
 chrome.runtime.onInstalled.addListener(initialize);
-chrome.runtime.onStartup.addListener(initialize);
-chrome.alarms.onAlarm.addListener(alarm => {
-  if (alarm.name === SYNC_ALARM_NAME) enqueue(async () => sync(await loadState())).catch(console.error);
-});
