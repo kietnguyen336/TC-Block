@@ -29,7 +29,7 @@ Thiếu cấu hình cần thiết sẽ từ chối yêu cầu. Không deploy b�
 2. Chọn API public, ví dụ `https://tc-block-api.<subdomain>.workers.dev` và điền chính xác vào `API_ORIGIN` (không path, không dấu `/` cuối).
 3. Gắn **custom domain quản trị** vào cùng Worker, ví dụ `https://admin.<your-domain>`, điền vào `ADMIN_ORIGIN`. API public vẫn dùng workers.dev; các route quản trị chỉ chấp nhận ADMIN_ORIGIN.
 4. Tạo **Self-hosted application trong Cloudflare Access** cho toàn bộ hostname quản trị. Chỉ cho phép email/nhóm quản trị và bật MFA trong policy/IdP; session không quá 8 giờ. Không bảo vệ toàn bộ API public bằng màn hình đăng nhập Access vì extension cần tải danh sách không đăng nhập.
-5. Điền `ACCESS_TEAM_DOMAIN` dạng `https://<team>.cloudflareaccess.com`, `ACCESS_AUD` từ ứng dụng Access và `ADMIN_EMAILS` là danh sách email cách nhau bằng dấu phẩy. Backend còn kiểm tra email để tránh policy Access rộng hơn dự định.
+5. Điền `ACCESS_TEAM_DOMAIN` dạng `https://<team>.cloudflareaccess.com` và `ACCESS_AUD` từ ứng dụng Access. Lưu allowlist email bằng `npx wrangler secret put ADMIN_EMAILS`, nhập danh sách email cách nhau bằng dấu phẩy khi Wrangler hỏi. Không truyền secret trên command line và không commit email quản trị vào `wrangler.toml`. Backend còn kiểm tra allowlist này để tránh policy Access rộng hơn dự định. Lệnh `secret put` tạo một version/deployment mới; lần deploy đầu có thể fail-closed ở route quản trị cho đến khi secret được thêm.
 6. Điền `EXTENSION_IDS` (ID từ Chrome Web Store, cách nhau dấu phẩy). Origin khác không được gửi báo cáo từ trình duyệt. Request không có Origin vẫn cần mã hợp lệ; **CORS không chặn curl/bot**.
 7. Giữ đủ năm binding rate limit, namespace ID riêng cho ứng dụng. Cấu hình hiện tại:
 

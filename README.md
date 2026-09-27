@@ -53,7 +53,13 @@ npx wrangler login
 npx wrangler d1 create tc-block-db
 ```
 
-Cập nhật `database_id` thật và các biến trong `wrangler.toml` theo [hướng dẫn bảo mật](SECURITY.md#cấu-hình-production): `API_ORIGIN`, `ADMIN_ORIGIN`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `ADMIN_EMAILS`, `EXTENSION_IDS`. Giữ `LOCAL_DEV = "false"`. Tạo ứng dụng Cloudflare Access bảo vệ hostname quản trị, giới hạn đúng quản trị viên và yêu cầu MFA ở nhà cung cấp danh tính. Sau đó:
+Cập nhật `database_id` thật và các biến không bí mật trong `wrangler.toml` theo [hướng dẫn bảo mật](SECURITY.md#cấu-hình-production): `API_ORIGIN`, `ADMIN_ORIGIN`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `EXTENSION_IDS`. Giữ `LOCAL_DEV = "false"`. Lưu email quản trị bằng Worker Secret, không commit vào repo:
+
+```powershell
+npx wrangler secret put ADMIN_EMAILS
+```
+
+Tạo ứng dụng Cloudflare Access bảo vệ hostname quản trị, giới hạn đúng quản trị viên và yêu cầu MFA ở nhà cung cấp danh tính. Sau đó:
 
 ```powershell
 npx wrangler d1 execute tc-block-db --remote --file=./schema.sql
