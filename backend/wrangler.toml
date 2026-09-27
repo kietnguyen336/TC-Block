@@ -6,14 +6,11 @@ preview_urls = false
 [vars]
 LOCAL_DEV = "false"
 # Fill in exact production origins. Missing values fail closed.
-API_ORIGIN = ""
+API_ORIGIN = "https://tc-block-api.kietnguyen336.workers.dev"
 ADMIN_ORIGIN = ""
 ACCESS_TEAM_DOMAIN = ""
 ACCESS_AUD = ""
 EXTENSION_IDS = ""
-
-[limits]
-cpu_ms = 50
 
 [observability]
 enabled = true
@@ -49,4 +46,4 @@ simple = { limit = 1000, period = 60 }
 [[d1_databases]]
 binding = "DB"
 database_name = "tc-block-db"
-database_id = "tc-block-db-local-id"
+database_id = "e760f731-52ed-4280-bd8c-70fdc795bbf4"
