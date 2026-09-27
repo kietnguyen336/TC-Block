@@ -7,9 +7,9 @@ preview_urls = false
 LOCAL_DEV = "false"
 # Fill in exact production origins. Missing values fail closed.
 API_ORIGIN = "https://tc-block-api.kietnguyen336.workers.dev"
-ADMIN_ORIGIN = ""
-ACCESS_TEAM_DOMAIN = ""
-ACCESS_AUD = ""
+ADMIN_ORIGIN = "https://admin.womba.dpdns.org"
+ACCESS_TEAM_DOMAIN = "https://green-moon-a626.cloudflareaccess.com"
+ACCESS_AUD = "0b88ee617325eb51b8c9ac1be0dfd0a36f5a7f3d80fab91fec2735e30348b5a7"
 EXTENSION_IDS = ""
 
 [observability]
