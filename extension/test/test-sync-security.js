@@ -35,10 +35,11 @@ assert.equal((await client.send(null)).success,false);
 
 let posts=0;
 const throttled=backgroundHarness(async (url,options)=>{
-  if(options.method==='POST') {posts++;return new Response(JSON.stringify({success:false,error:'Rate limited'}),{status:429,headers:{'Retry-After':'120'}});}
+  if(url.endsWith('/api/register')) return new Response(JSON.stringify({success:true,token:'tcr_'+'B'.repeat(43),expires_at:Math.floor(Date.now()/1000)+365*86400}),{status:201});
+  if(url.endsWith('/api/reports')) {posts++;return new Response(JSON.stringify({success:false,error:'Rate limited'}),{status:429,headers:{'Retry-After':'120'}});}
   return new Response(JSON.stringify({success:true,data:[],revision:1,next_cursor:null}));
 });
-await throttled.send({action:'SET_SETTINGS',url:'http://localhost:8787',token:'synthetic-reporter'});
+await throttled.send({action:'SET_SETTINGS',url:'http://localhost:8787'});
 assert.equal((await throttled.send({action:'SUBMIT_REPORT',data:{channel_handle:'@limited',reason:'spam'}})).queued,true);
 await throttled.send({action:'FORCE_SYNC'});
 await throttled.send({action:'SUBMIT_REPORT',data:{channel_handle:'@another',reason:'spam'}});

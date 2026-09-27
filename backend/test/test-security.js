@@ -8,7 +8,7 @@ const DB = createD1();
 const local = { DB, LOCAL_DEV: 'true', ADMIN_TOKEN: 'synthetic-local-admin-key-with-more-than-32-characters' };
 const apiOrigin = 'https://api.test.workers.dev';
 const adminOrigin = 'https://admin.example.test';
-const limits = ['INGRESS_LIMITER', 'AUTH_LIMITER', 'REPORTER_LIMITER', 'ADMIN_LIMITER', 'DB_LIMITER'];
+const limits = ['INGRESS_LIMITER', 'AUTH_LIMITER', 'REGISTRATION_LIMITER', 'REPORTER_LIMITER', 'ADMIN_LIMITER', 'DB_LIMITER'];
 const limitCalls = [];
 const prod = {
   DB, API_ORIGIN: apiOrigin, ADMIN_ORIGIN: adminOrigin,
@@ -30,23 +30,28 @@ async function call(path, {env = local, method = 'GET', body, token, headers = {
 }
 const admin = (path, body) => call('/api/admin/' + path, {method:body ? 'POST':'GET',body,token:local.ADMIN_TOKEN});
 const sample = {channel_handle:'@securitytest',channel_name:'Security test',reason:'Synthetic test report'};
-let issued = (await admin('reporters',{label:'Test identity'})).data;
+const register = (token='',options={}) => call('/api/register',{method:'POST',body:{},token,...options});
+let issued = (await register()).data;
 const report = (token, body=sample, options={}) => call('/api/reports',{method:'POST',token,body,...options});
 assert.match(issued.token,/^tcr_[A-Za-z0-9_-]{43}$/);
-assert.ok(issued.expires_at > Date.now()/1000 + 89 * 86400);
+assert.ok(issued.expires_at > Date.now()/1000 + 364 * 86400);
 assert.equal((await report(issued.token)).status,201);
-const previous = issued.token;
-issued = (await admin('reporters/'+issued.id+'/rotate',{})).data;
-assert.equal((await report(previous)).status,401);
-assert.equal((await report(issued.token)).data.duplicate,true, 'Rotation never creates a second identity/vote');
+const renewed = (await register(issued.token)).data;
+assert.equal(renewed.reporter_id,issued.reporter_id);
+assert.equal(renewed.token,issued.token);
+assert.equal((await report(issued.token)).data.duplicate,true, 'Anonymous renewal never creates a second identity/vote');
 assert.equal(DB.sqlite.prepare('SELECT COUNT(*) AS n FROM community_reports').get().n,1);
-DB.sqlite.prepare('UPDATE reporter_credentials SET expires_at = 0 WHERE reporter_id = ?').run(issued.id);
+DB.sqlite.prepare('UPDATE reporter_credentials SET expires_at = 0 WHERE reporter_id = ?').run(issued.reporter_id);
 assert.equal((await report(issued.token)).status,401);
-issued = (await admin('reporters/'+issued.id+'/rotate',{})).data;
-DB.sqlite.prepare('DELETE FROM reporter_credentials WHERE reporter_id = ?').run(issued.id);
+assert.equal((await register(issued.token)).status,200);
+DB.sqlite.prepare('DELETE FROM reporter_credentials WHERE reporter_id = ?').run(issued.reporter_id);
 assert.equal((await report(issued.token)).status,401, 'Legacy credentials without expiry are not accepted');
-issued = (await admin('reporters/'+issued.id+'/rotate',{})).data;
-assert.ok(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM security_audit WHERE actor = 'local-admin'").get().n >= 4);
+assert.equal((await register(issued.token)).status,200);
+await admin('reporters/'+issued.reporter_id+'/revoke',{});
+assert.equal((await report(issued.token)).status,401);
+assert.equal((await register(issued.token)).status,403);
+issued = (await register()).data;
+assert.equal(DB.sqlite.prepare("SELECT COUNT(*) AS n FROM security_audit WHERE actor = 'local-admin'").get().n,1);
 
 // Origin checks are independent of authentication; CORS is not used as authorization.
 assert.equal((await call('/api/admin/reporters',{method:'POST',body:{label:'bad'},token:local.ADMIN_TOKEN,headers:{Origin:'https://evil.example'}})).status,403);
@@ -84,6 +89,8 @@ let dbReads = 0;
 const forbiddenDB = {prepare(){dbReads++;throw new Error('Database should not be reached');}};
 const denied = await report(fakeToken,sample,{env:{...prod,DB:forbiddenDB,AUTH_LIMITER:{async limit(){return {success:false};}}}});
 assert.equal(denied.status,429); assert.equal(denied.headers.get('Retry-After'),'60'); assert.equal(dbReads,0);
+assert.equal((await register('',{env:{...prod,DB:forbiddenDB,REGISTRATION_LIMITER:{async limit(){return {success:false};}}}})).status,429);
+assert.equal(dbReads,0);
 assert.equal((await call('/api/blocked',{env:{...prod,DB:forbiddenDB,DB_LIMITER:{async limit(){return {success:false};}}}})).status,429);
 assert.equal(dbReads,0);
 assert.equal((await call('/api/blocked',{env:{...prod,INGRESS_LIMITER:{async limit(){throw new Error('unavailable');}}}})).status,503);
@@ -92,8 +99,9 @@ await call('/api/health',{env:prod,headers:{'CF-Connecting-IP':'192.0.2.1','X-Fo
 await call('/api/health',{env:prod,headers:{'CF-Connecting-IP':'192.0.2.1','X-Forwarded-For':'8.8.8.8'}});
 assert.equal(limitCalls[0].key,limitCalls[1].key); assert.match(limitCalls[0].key,/^[a-f0-9]{64}$/);
 assert.equal((await report(issued.token,sample,{env:prod,headers:{Origin:'https://evil.example'}})).status,403);
+assert.equal((await register('',{env:prod,headers:{Origin:'https://evil.example'}})).status,403);
 const cors = await report(issued.token,sample,{env:prod,headers:{Origin:'chrome-extension://'+'a'.repeat(32)}});
-assert.equal(cors.status,200); assert.equal(cors.headers.get('Access-Control-Allow-Origin'),'chrome-extension://'+'a'.repeat(32));
+assert.equal(cors.status,201); assert.equal(cors.headers.get('Access-Control-Allow-Origin'),'chrome-extension://'+'a'.repeat(32));
 assert.equal((await report(issued.token,sample,{env:{...prod,REPORTER_LIMITER:{async limit(){return {success:false};}}}})).status,429);
 
 // Real RSA signatures, real jose verifier and the production remote-JWKS path.
@@ -134,9 +142,9 @@ try {
   assert.equal(page.headers.get('Cache-Control'),'no-store');
   assert.equal(page.headers.get('Access-Control-Allow-Origin'),null);
   assert.ok(page.headers.get('Strict-Transport-Security'));
-  const issuedViaAccess=await accessCall('/api/admin/reporters',valid,{method:'POST',body:{label:'Access owner action'}});
-  assert.equal(issuedViaAccess.status,201);
-  assert.equal(DB.sqlite.prepare('SELECT actor FROM security_audit WHERE target = ?').get(issuedViaAccess.data.id).actor,'access:admin-subject');
+  const decidedViaAccess=await accessCall('/api/admin/channels/%40securitytest',valid,{method:'POST',body:{status:'approved',note:'Access owner action'}});
+  assert.equal(decidedViaAccess.status,200);
+  assert.equal(DB.sqlite.prepare("SELECT actor FROM security_audit WHERE target = '@securitytest' ORDER BY id DESC").get().actor,'access:admin-subject');
 } finally {globalThis.fetch=originalFetch;}
 
 // Paging is bounded; revisions prevent publishing a mixture of two blocklist versions.
@@ -145,7 +153,7 @@ for(let i=0;i<501;i++) insert.run('@page'+String(i).padStart(4,'0'));
 const first=await call('/api/blocked');
 assert.equal(first.data.data.length,500); assert.ok(first.data.next_cursor);
 const second=await call('/api/blocked?cursor='+encodeURIComponent(first.data.next_cursor)+'&revision='+first.data.revision);
-assert.equal(second.data.data.length,1); assert.equal(second.data.next_cursor,null);
+assert.equal(second.data.data.length,2); assert.equal(second.data.next_cursor,null);
 assert.equal((await call('/api/blocked?cursor=%40page0001')).status,400);
 assert.equal((await call('/api/blocked?revision=-1')).status,400);
 assert.equal((await call('/api/blocked?limit=999999')).status,400);
@@ -174,4 +182,4 @@ try {
   assert.ok(result.data.request_id);
 } finally {console.error=oldError;}
 DB.sqlite.close();
-console.log('PASS security: production JWT/host/CSRF gates, rate limits before DB, body bounds/timeouts, token expiry/rotation, audit, paging revisions/cache and safe errors');
+console.log('PASS security: production JWT/host/CSRF gates, rate limits before DB, body bounds/timeouts, anonymous renewal/revocation, audit, paging revisions/cache and safe errors');

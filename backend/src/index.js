@@ -3,7 +3,7 @@ import { HttpError, fail, digest, bearer, bodyOf, localMode, checkTransport, ing
   rateLimit, reportOrigin, checkAdminMutation, authenticateAdmin, randomToken, TOKEN_PATTERN, securityHeaders } from './security.js';
 
 const PAGE_SIZE = 500;
-const TOKEN_LIFETIME_SECONDS = 90 * 86400;
+const TOKEN_LIFETIME_SECONDS = 365 * 86400;
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), { status, headers: {
     'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...headers,
@@ -48,58 +48,43 @@ async function adminApi(request, env, url, actor) {
   await rateLimit(request, env, 'ADMIN_LIMITER', actor);
   await rateLimit(request, env, 'DB_LIMITER', 'database');
   if (path === '/api/admin/me' && method === 'GET') return json({ success: true, actor });
-  if (path === '/api/admin/reporters' && method === 'GET') {
-    queryKeys(url, ['cursor']);
-    const cursor = url.searchParams.get('cursor') || '';
-    if (cursor && !/^[a-f0-9-]{36}$/.test(cursor)) fail('Cursor không hợp lệ');
-    const { results } = await db.prepare(`SELECT p.id, p.label, p.active, p.created_at, c.expires_at
-      FROM reporters p LEFT JOIN reporter_credentials c ON c.reporter_id = p.id
-      WHERE p.id > ? ORDER BY p.id LIMIT 101`).bind(cursor).all();
-    return json({ success: true, data: results.slice(0, 100), next_cursor: results.length > 100 ? results[99].id : null });
-  }
-  if (path === '/api/admin/reporters' && method === 'POST') {
+  if (path === '/api/admin/summary' && method === 'GET') {
     queryKeys(url, []);
-    const body = await bodyOf(request);
-    const label = field(body.label, 'Tên người tham gia', 120);
-    const id = crypto.randomUUID();
-    const token = randomToken();
-    const expires = Math.floor(Date.now() / 1000) + TOKEN_LIFETIME_SECONDS;
-    await db.batch([
-      db.prepare('INSERT INTO reporters (id, label, token_hash) VALUES (?, ?, ?)').bind(id, label, await digest(token)),
-      db.prepare('INSERT INTO reporter_credentials (reporter_id, expires_at) VALUES (?, ?)').bind(id, expires),
-      audit(db, actor, 'reporter.issue', id),
+    const rows = await db.batch([
+      db.prepare("SELECT COUNT(*) AS value FROM moderation_channels WHERE status = 'pending'"),
+      db.prepare(`SELECT COUNT(*) AS value FROM moderation_channels c WHERE c.status = 'pending' AND ${recentCount} >= 5`),
+      db.prepare("SELECT COUNT(*) AS value FROM moderation_channels WHERE status = 'approved'"),
+      db.prepare("SELECT COUNT(*) AS value FROM moderation_channels WHERE status = 'rejected'"),
+      db.prepare("SELECT COUNT(*) AS value FROM community_reports WHERE created_at >= datetime('now', '-30 days')"),
+      db.prepare('SELECT COUNT(*) AS value FROM reporters WHERE active = 1'),
     ]);
-    return json({ success: true, id, token, expires_at: expires }, 201);
+    const values = rows.map(row => Number(row.results[0]?.value || 0));
+    return json({ success: true, data: {
+      pending: values[0], priority: values[1], approved: values[2], rejected: values[3],
+      reports_30d: values[4], active_reporters: values[5],
+    } });
   }
-  const credential = path.match(/^\/api\/admin\/reporters\/([a-f0-9-]{36})\/(revoke|rotate)$/);
+  const credential = path.match(/^\/api\/admin\/reporters\/([a-f0-9-]{36})\/revoke$/);
   if (credential && method === 'POST') {
     queryKeys(url, []);
     await bodyOf(request);
-    const [, id, operation] = credential;
+    const [, id] = credential;
     const reporter = await db.prepare('SELECT active FROM reporters WHERE id = ?').bind(id).first();
-    if (!reporter) fail('Không tìm thấy người tham gia', 404);
-    if (operation === 'revoke') {
-      await db.batch([db.prepare('UPDATE reporters SET active = 0 WHERE id = ?').bind(id), audit(db, actor, 'reporter.revoke', id)]);
-      return json({ success: true });
-    }
-    if (!reporter.active) fail('Không đổi mã của người đã bị thu hồi quyền', 409);
-    const token = randomToken();
-    const expires = Math.floor(Date.now() / 1000) + TOKEN_LIFETIME_SECONDS;
-    await db.batch([
-      db.prepare('UPDATE reporters SET token_hash = ? WHERE id = ? AND active = 1').bind(await digest(token), id),
-      db.prepare(`INSERT INTO reporter_credentials (reporter_id, expires_at) VALUES (?, ?)
-        ON CONFLICT(reporter_id) DO UPDATE SET expires_at = excluded.expires_at`).bind(id, expires),
-      audit(db, actor, 'reporter.rotate', id),
-    ]);
-    return json({ success: true, id, token, expires_at: expires });
+    if (!reporter) fail('Không tìm thấy nguồn báo cáo', 404);
+    if (!reporter.active) return json({ success: true, duplicate: true });
+    await db.batch([db.prepare('UPDATE reporters SET active = 0 WHERE id = ?').bind(id), audit(db, actor, 'reporter.revoke', id)]);
+    return json({ success: true });
   }
   if (path === '/api/admin/channels' && method === 'GET') {
-    queryKeys(url, ['status', 'offset']);
+    queryKeys(url, ['status', 'offset', 'q']);
     const status = url.searchParams.get('status') || 'pending';
     const offset = url.searchParams.get('offset') || '0';
-    if (!['pending', 'approved', 'rejected'].includes(status) || !/^\d{1,5}$/.test(offset)) fail('Tham số không hợp lệ');
+    const search = (url.searchParams.get('q') || '').trim().normalize('NFC');
+    if (!['pending', 'approved', 'rejected'].includes(status) || !/^\d{1,5}$/.test(offset) || search.length > 100 || /[\u0000-\u001F\u007F]/.test(search)) fail('Tham số không hợp lệ');
+    const pattern = '%' + search.replace(/[\\%_]/g, '\\$&') + '%';
     const { results } = await db.prepare(`SELECT c.*, ${recentCount} AS recent_reports
-      FROM moderation_channels c WHERE c.status = ? ORDER BY recent_reports DESC, c.channel_handle LIMIT 101 OFFSET ?`).bind(status, Number(offset)).all();
+      FROM moderation_channels c WHERE c.status = ? AND (? = '' OR c.channel_handle LIKE ? ESCAPE '\\' OR c.channel_name LIKE ? ESCAPE '\\')
+      ORDER BY recent_reports DESC, c.updated_at DESC, c.channel_handle LIMIT 101 OFFSET ?`).bind(status, search, pattern, pattern, Number(offset)).all();
     return json({ success: true, data: results.slice(0, 100).map(c => ({ ...c, priority: c.status === 'pending' && c.recent_reports >= 5 })),
       next_offset: results.length > 100 ? Number(offset) + 100 : null });
   }
@@ -107,7 +92,7 @@ async function adminApi(request, env, url, actor) {
   if (evidence && method === 'GET') {
     queryKeys(url, []);
     const handle = channelFromPath(evidence[1]);
-    const { results } = await db.prepare(`SELECT r.reason, r.created_at, p.label, p.active,
+    const { results } = await db.prepare(`SELECT r.reporter_id, r.reason, r.created_at, p.label, p.active,
       r.created_at >= datetime('now', '-30 days') AND p.active = 1 AS eligible
       FROM community_reports r JOIN reporters p ON p.id = r.reporter_id
       WHERE r.channel_handle = ? ORDER BY r.created_at DESC LIMIT 200`).bind(handle).all();
@@ -131,6 +116,30 @@ async function adminApi(request, env, url, actor) {
     return json({ success: true });
   }
   fail('API không tồn tại', 404);
+}
+
+async function registerReporter(request, env, url) {
+  queryKeys(url, []);
+  await bodyOf(request);
+  const supplied = bearer(request);
+  if (supplied && !TOKEN_PATTERN.test(supplied)) fail('Danh tính báo cáo không hợp lệ', 401);
+  await rateLimit(request, env, 'REGISTRATION_LIMITER', await digest(request.headers.get('CF-Connecting-IP') || 'unknown'));
+  await rateLimit(request, env, 'DB_LIMITER', 'database');
+  const expires = Math.floor(Date.now() / 1000) + TOKEN_LIFETIME_SECONDS;
+  if (supplied) {
+    const reporter = await env.DB.prepare('SELECT id, active FROM reporters WHERE token_hash = ?').bind(await digest(supplied)).first();
+    if (!reporter || !reporter.active) fail('Danh tính báo cáo đã bị thu hồi hoặc không tồn tại', 403);
+    await env.DB.prepare(`INSERT INTO reporter_credentials (reporter_id, expires_at) VALUES (?, ?)
+      ON CONFLICT(reporter_id) DO UPDATE SET expires_at = excluded.expires_at`).bind(reporter.id, expires).run();
+    return json({ success: true, reporter_id: reporter.id, token: supplied, expires_at: expires });
+  }
+  const id = crypto.randomUUID();
+  const token = randomToken();
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO reporters (id, label, token_hash) VALUES (?, ?, ?)').bind(id, 'Ẩn danh ' + id.slice(0, 8), await digest(token)),
+    env.DB.prepare('INSERT INTO reporter_credentials (reporter_id, expires_at) VALUES (?, ?)').bind(id, expires),
+  ]);
+  return json({ success: true, reporter_id: id, token, expires_at: expires }, 201);
 }
 
 async function submitReport(request, env, url) {
@@ -216,15 +225,15 @@ export default {
       if (request.url.length > 2048) fail('URL quá dài', 414);
       checkTransport(request, env, admin);
       if (!['GET', 'POST', 'OPTIONS'].includes(request.method)) fail('API không tồn tại', 404);
-      if (!admin && !['/', '/api/health', '/api/blocked', '/api/reports'].includes(path)) fail('API không tồn tại', 404);
-      await ingress(request, env, admin || path === '/api/reports');
-      if (path === '/api/reports') {
+      if (!admin && !['/', '/api/health', '/api/blocked', '/api/register', '/api/reports'].includes(path)) fail('API không tồn tại', 404);
+      await ingress(request, env, admin || path === '/api/register' || path === '/api/reports');
+      if (path === '/api/register' || path === '/api/reports') {
         const origin = reportOrigin(request, env);
         if (origin) cors = { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' };
       } else if (!admin) cors = { 'Access-Control-Allow-Origin': '*' };
       if (request.method === 'OPTIONS') {
         if (admin) fail('Không hỗ trợ truy cập quản trị khác origin', 403);
-        const expected = path === '/api/reports' ? 'POST' : 'GET';
+        const expected = path === '/api/register' || path === '/api/reports' ? 'POST' : 'GET';
         if (request.headers.get('Access-Control-Request-Method') !== expected) fail('Preflight không hợp lệ', 405);
         response = new Response(null, { status: 204, headers: {
           'Access-Control-Allow-Methods': expected, 'Access-Control-Allow-Headers': 'Content-Type, Authorization',
@@ -249,7 +258,8 @@ export default {
         response = json({ success: !!env.DB, status: env.DB ? 'ok' : 'unavailable' }, env.DB ? 200 : 503);
       } else {
         if (!env.DB) fail('Dịch vụ chưa sẵn sàng', 503);
-        if (path === '/api/reports' && request.method === 'POST') response = await submitReport(request, env, url);
+        if (path === '/api/register' && request.method === 'POST') response = await registerReporter(request, env, url);
+        else if (path === '/api/reports' && request.method === 'POST') response = await submitReport(request, env, url);
         else if (path === '/api/blocked' && request.method === 'GET') response = await publicList(request, env, url, ctx);
         else fail('API không tồn tại', 404);
       }

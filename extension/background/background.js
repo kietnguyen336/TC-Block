@@ -1,6 +1,7 @@
 // Local choices and approved community data are stored separately for each API.
-const DEFAULT_API_URL = 'http://localhost:8787';
+const DEFAULT_API_URL = 'https://tc-block-api.kietnguyen336.workers.dev';
 const SYNC_ALARM_NAME = 'tc_block_sync_alarm';
+const REPORTER_REFRESH_WINDOW_SECONDS = 7 * 86400;
 let serial = Promise.resolve();
 function enqueue(task) {
   const result = serial.then(task);
@@ -23,7 +24,7 @@ function validateUrl(value) {
   }
   return url.origin;
 }
-function emptyScope() { return { personal: {}, allowed: {}, community: {}, pending: {}, token: '', lastSync: null, syncError: '' }; }
+function emptyScope() { return { personal: {}, allowed: {}, community: {}, pending: {}, token: '', tokenExpiresAt: 0, lastSync: null, syncError: '' }; }
 async function loadState() {
   const saved = await chrome.storage.local.get(['tc_state_v2', 'tc_api_url']);
   if (saved.tc_state_v2) return saved.tc_state_v2;
@@ -73,16 +74,37 @@ async function api(state, path, body) {
   });
   return data;
 }
+async function ensureReporter(state, force = false) {
+  const scope = scopeOf(state);
+  const now = Math.floor(Date.now() / 1000);
+  if (!force && scope.token && Number(scope.tokenExpiresAt) > now + REPORTER_REFRESH_WINDOW_SECONDS) return;
+  const data = await api(state, '/api/register', {});
+  if (!/^tcr_[A-Za-z0-9_-]{43}$/.test(data.token) || !Number.isSafeInteger(data.expires_at) || data.expires_at <= now) {
+    throw new Error('Máy chủ trả về danh tính báo cáo không hợp lệ');
+  }
+  scope.token = data.token;
+  scope.tokenExpiresAt = data.expires_at;
+  await save(state);
+}
 async function flushReports(state, onlyHandle) {
   const scope = scopeOf(state);
   if (scope.reportRetryAt > Date.now()) return;
+  try { await ensureReporter(state); }
+  catch (err) {
+    if (err.status === 429) scope.reportRetryAt = Date.now() + err.retryAfter * 1000;
+    for (const entry of Object.values(scope.pending)) entry.error = 'Không thể khởi tạo danh tính ẩn danh: ' + err.message;
+    await save(state); return;
+  }
   let attempts = 0;
   for (const [handle, entry] of Object.entries(scope.pending)) {
     if ((onlyHandle && handle !== onlyHandle) || entry.status === 'failed') continue;
-    if (!scope.token) { entry.error = 'Thêm mã báo cáo trong cài đặt để gửi cộng đồng'; break; }
     if (++attempts > 5) break;
     try { await api(state, '/api/reports', entry.payload); delete scope.pending[handle]; }
     catch (err) {
+      if (err.status === 401) {
+        try { await ensureReporter(state, true); await api(state, '/api/reports', entry.payload); delete scope.pending[handle]; continue; }
+        catch (retryError) { err = retryError; }
+      }
       entry.error = err.message;
       if (err.status === 429) scope.reportRetryAt = Date.now() + err.retryAfter * 1000;
       if (err.status === 400 || err.status === 413) entry.status = 'failed';
@@ -142,18 +164,13 @@ async function handleMessage(message, sender) {
         pendingError: Object.values(scope.pending).find(p => p.error)?.error || '', hiddenCount: stats.tc_hidden_count || 0,
         allowed: scope.allowed };
     }
-    case 'GET_SETTINGS': return { success: true, apiUrl: state.apiUrl, hasToken: !!scope.token };
+    case 'GET_SETTINGS': return { success: true, apiUrl: state.apiUrl, reporterReady: !!scope.token };
     case 'SET_SETTINGS': {
       const nextUrl = validateUrl(message.url);
       state.apiUrl = nextUrl;
       const next = scopeOf(state);
-      if (message.clearToken) next.token = '';
-      else if (typeof message.token === 'string' && message.token.trim()) {
-        next.token = message.token.trim();
-        if (next.token.length > 512) throw new Error('Mã báo cáo quá dài');
-        next.reportRetryAt = 0;
-        for (const p of Object.values(next.pending)) { p.status = 'queued'; p.error = ''; }
-      }
+      next.reportRetryAt = 0;
+      for (const p of Object.values(next.pending)) { p.status = 'queued'; p.error = ''; }
       await publish(state);
       const syncRes = await sync(state);
       return { success: true, syncRes };
@@ -199,7 +216,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 function initialize() {
   chrome.storage.local.setAccessLevel?.({ accessLevel: 'TRUSTED_CONTEXTS' });
   chrome.alarms.create(SYNC_ALARM_NAME, { periodInMinutes: 10 });
-  enqueue(async () => sync(await loadState())).catch(console.error);
+  enqueue(async () => { const state = await loadState(); await ensureReporter(state).catch(() => {}); return sync(state); }).catch(console.error);
 }
 chrome.runtime.onInstalled.addListener(initialize);
 chrome.runtime.onStartup.addListener(initialize);

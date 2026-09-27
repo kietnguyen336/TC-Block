@@ -9,14 +9,14 @@ Mã nguồn và địa chỉ API được coi là công khai. Backend không tin
 | Quản trị production | JWT Cloudflare Access: chữ ký RS256, issuer cố định trong cấu hình, đúng audience, subject/email, thời hạn và tuổi token tối đa 8 giờ; email phải trong allowlist |
 | Không đi vòng Access | Worker tự xác minh JWT; hostname không đúng bị chặn. Header email tự gửi và `ADMIN_TOKEN` local không cấp quyền public |
 | CSRF | POST quản trị phải có Origin chính xác, header `X-TC-Admin-Action: 1` và không có Sec-Fetch-Site khác same-origin; admin không mở CORS |
-| Báo cáo | Mã riêng 256 bit, chỉ lưu SHA-256, hết hạn sau 90 ngày, đổi/thu hồi được. Đổi mã không tạo thêm người/phiếu |
+| Báo cáo | Extension tự nhận token ẩn danh 256 bit, chỉ lưu SHA-256 trên server, tự gia hạn và có thể bị quản trị viên thu hồi |
 | Lưu lượng | Native Workers Rate Limiting trước D1/JWT, theo IP ở cửa vào và theo danh tính sau xác thực; thêm ngân sách truy cập D1 |
 | Ghi dữ liệu | Tối đa 20 kênh mới/người/24 giờ, một phiếu/người/kênh; kiểm tra quota, credential và ghi dữ liệu trong cùng D1 batch |
 | Payload | Chỉ JSON UTF-8, đọc stream tối đa 16 KiB, timeout 5 giây, không tin riêng Content-Length, không nhận body nén |
 | Truy vấn public | 500 kênh/trang, keyset pagination có revision, cache public 60 giây; không đếm toàn bộ lịch sử báo cáo mỗi lần tải |
 | Giao diện | CSP nonce cho script/style, chống iframe, nosniff, no-referrer, HSTS trên HTTPS; nội dung người dùng hiển thị bằng textContent/escape |
-| Nhật ký | Audit các thao tác cấp/đổi/thu hồi mã và quyết định, gắn Access subject; lỗi nội bộ chỉ lộ request ID, không lộ SQL/stack/token |
-| Extension | Giới hạn nguồn message và quyền theo popup/content script, không gửi mã sang API mới hoặc qua redirect; kiểm tra phân trang và giữ cache cũ nếu tải lỗi |
+| Nhật ký | Audit thao tác thu hồi nguồn và quyết định, gắn Access subject; lỗi nội bộ chỉ lộ request ID, không lộ SQL/stack/token |
+| Extension | Không yêu cầu tài khoản người dùng; giới hạn nguồn message và quyền theo popup/content script, tách token theo API, không đi theo redirect; kiểm tra phân trang và giữ cache cũ nếu tải lỗi |
 | Dependencies | Lockfile, phiên bản chính xác, CI kiểm thử/audit/build; không commit .dev.vars, .env, private key hoặc output build |
 
 JWT/JWKS dùng thư viện `jose`; không tự cài đặt thuật toán ký. JWKS chỉ lấy từ team domain cấu hình phía server, có timeout và cache; không lấy URL từ JWT do người gọi đưa vào.
@@ -31,18 +31,19 @@ Thiếu cấu hình cần thiết sẽ từ chối yêu cầu. Không deploy b�
 4. Tạo **Self-hosted application trong Cloudflare Access** cho toàn bộ hostname quản trị. Chỉ cho phép email/nhóm quản trị và bật MFA trong policy/IdP; session không quá 8 giờ. Không bảo vệ toàn bộ API public bằng màn hình đăng nhập Access vì extension cần tải danh sách không đăng nhập.
 5. Điền `ACCESS_TEAM_DOMAIN` dạng `https://<team>.cloudflareaccess.com` và `ACCESS_AUD` từ ứng dụng Access. Lưu allowlist email bằng `npx wrangler secret put ADMIN_EMAILS`, nhập danh sách email cách nhau bằng dấu phẩy khi Wrangler hỏi. Không truyền secret trên command line và không commit email quản trị vào `wrangler.toml`. Backend còn kiểm tra allowlist này để tránh policy Access rộng hơn dự định. Lệnh `secret put` tạo một version/deployment mới; lần deploy đầu có thể fail-closed ở route quản trị cho đến khi secret được thêm.
 6. Điền `EXTENSION_IDS` (ID từ Chrome Web Store, cách nhau dấu phẩy). Origin khác không được gửi báo cáo từ trình duyệt. Request không có Origin vẫn cần mã hợp lệ; **CORS không chặn curl/bot**.
-7. Giữ đủ năm binding rate limit, namespace ID riêng cho ứng dụng. Cấu hình hiện tại:
+7. Giữ đủ sáu binding rate limit, namespace ID riêng cho ứng dụng. Cấu hình hiện tại:
 
 | Binding | Ngưỡng mỗi 60 giây | Khóa |
 | --- | ---: | --- |
 | INGRESS_LIMITER | 180 | Hash CF-Connecting-IP |
 | AUTH_LIMITER | 40 | Hash CF-Connecting-IP, route báo cáo/quản trị |
+| REGISTRATION_LIMITER | 3 | Hash CF-Connecting-IP, cấp/gia hạn danh tính ẩn danh |
 | REPORTER_LIMITER | 10 | Reporter ID sau xác thực |
 | ADMIN_LIMITER | 60 | Access subject |
 | DB_LIMITER | 1000 | Ngân sách chung cho các nhóm thao tác DB |
 
-8. `npm ci`, `node ../scripts/verify-all.js`, `npm run check`, rồi `npm run deploy` trong `backend`. Build dry-run không deploy. Kiểm tra plan hỗ trợ cấu hình CPU limit 50 ms; chỉnh về giới hạn plan nếu cần.
-9. Kiểm tra từ một client chưa đăng nhập: `/api/admin/me` ở API hostname bị từ chối, hostname quản trị yêu cầu Access, JWT giả không vào được, `/api/blocked` vẫn hoạt động công khai. Đăng nhập hợp lệ rồi cấp/đổi mã cho người tham gia.
+8. `npm ci`, `node ../scripts/verify-all.js`, `npm run check`, rồi `npm run deploy` trong `backend`. Build dry-run không deploy. Gói Workers Free không nhận cấu hình `limits.cpu_ms`, nên dự án để Cloudflare áp dụng giới hạn mặc định của plan.
+9. Kiểm tra từ một client chưa đăng nhập: `/api/admin/me` ở API hostname bị từ chối, hostname quản trị yêu cầu Access, JWT giả không vào được, `/api/blocked` vẫn hoạt động công khai. Cài extension mới và xác nhận báo cáo đầu tiên tự đăng ký qua `/api/register`, không hỏi tài khoản hoặc mã.
 
 Đây là các bước cấu hình tài khoản Cloudflare; mã nguồn không tự tạo Access policy, MFA, custom domain hoặc WAF rule. Không bỏ kiểm tra JWT để vượt qua lỗi cấu hình.
 
@@ -50,10 +51,10 @@ Thiếu cấu hình cần thiết sẽ từ chối yêu cầu. Không deploy b�
 
 - Workers Rate Limiting là giới hạn xấp xỉ **theo từng Cloudflare location**, không phải quota toàn cầu chính xác. Quota 20 báo cáo/ngày được kiểm tra riêng trong D1 transaction. IP có thể dùng chung (NAT) nên ngưỡng cửa vào có thể ảnh hưởng nhiều người; cần theo dõi 429 để điều chỉnh.
 - Các giới hạn chạy sau khi Worker đã được gọi. Chúng giảm tải DB/ghi dữ liệu, không bảo đảm miễn phí hoặc miễn nhiễm DDoS phân tán. Khi mở rộng, cấu hình WAF/rate limiting ở edge, cảnh báo usage/billing và theo dõi 429/5xx tại Cloudflare. Cache public có thể trễ 60 giây sau quyết định duyệt/gỡ.
-- Chủ mã hợp lệ vẫn có thể gửi báo cáo sai trong quota. Chỉ quản trị viên duyệt mới tác động cộng đồng. Cấp nhiều danh tính cho cùng một người hoặc để lộ mã là rủi ro vận hành; không có tuyên bố “một thiết bị = một người”.
+- Người dùng ẩn danh vẫn có thể gửi báo cáo sai trong quota hoặc tạo danh tính mới bằng cách xóa dữ liệu/cài lại. Chỉ quản trị viên duyệt mới tác động cộng đồng; không có tuyên bố “một thiết bị = một người”.
 - Chỉ hash IP cho khóa rate limit, không lưu vào bảng ứng dụng. Cloudflare có thể ghi metadata request theo cấu hình logging của tài khoản. Không gửi bí mật qua URL và không đưa token vào lý do báo cáo.
-- Đổi/thu hồi mã bị lộ ngay, kiểm tra `security_audit`, xem lại các quyết định bất thường. Nếu tài khoản quản trị bị lộ, thu hồi session ở Access/IdP và sửa allowlist. Nút “Xóa thông tin trên trang” chỉ dọn nội dung/khóa local, **không đăng xuất session Access**.
-- Sao lưu D1 trước thay đổi lớn. Chạy schema mới là thay đổi bổ sung; lịch sử cũ được giữ. Mã từ phiên bản chưa có expiry phải được đổi trên cùng Reporter ID, không tạo một người mới.
+- Thu hồi nguồn báo cáo bất thường trong phần bằng chứng và kiểm tra `security_audit`. Nếu tài khoản quản trị bị lộ, thu hồi session ở Access/IdP và sửa allowlist. Nút **Đăng xuất** trên trang production chuyển tới endpoint đăng xuất Cloudflare Access.
+- Sao lưu D1 trước thay đổi lớn. Chạy schema mới là thay đổi bổ sung; lịch sử cũ được giữ. Token cũ còn hoạt động được gia hạn trên cùng Reporter ID khi extension nâng cấp.
 - Bộ test không thay thế pentest hoặc kiểm thử tải production. Triển khai an toàn còn phụ thuộc cấu hình Access, quyền tài khoản Cloudflare/GitHub, máy quản trị và quy trình duyệt.
 
 ## Báo cáo lỗ hổng

@@ -14,8 +14,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsPanel = document.getElementById('settingsPanel');
   const apiUrlInput = document.getElementById('apiUrlInput');
   const saveApiBtn = document.getElementById('saveApiBtn');
-  const reporterToken = document.getElementById('reporterToken');
-  const clearToken = document.getElementById('clearToken');
   const pendingStatus = document.getElementById('pendingStatus');
   const allowedList = document.getElementById('allowedList');
   const blockedCountEl = document.getElementById('blockedCount');
@@ -63,11 +61,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }));
         row.append(label, button); allowedList.append(row);
       });
-      chrome.runtime.sendMessage({ action: 'GET_SETTINGS' }, settings => {
-        if (chrome.runtime.lastError || !settings?.success) return;
-        document.getElementById('tokenHelp').textContent = settings.hasToken ? 'Đã lưu mã báo cáo cho máy chủ này.' : 'Chưa có mã: báo cáo được giữ trên máy cho đến khi thêm mã.';
-      });
-
       // Cập nhật thống kê
       const totalBlocked = Object.keys(channelsData).length;
       blockedCountEl.textContent = totalBlocked;
@@ -202,13 +195,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!newUrl) return;
 
     saveApiBtn.textContent = 'Đang lưu...';
-    chrome.runtime.sendMessage({ action: 'SET_SETTINGS', url: newUrl, token: reporterToken.value, clearToken: clearToken.checked }, (res) => {
+    chrome.runtime.sendMessage({ action: 'SET_SETTINGS', url: newUrl }, (res) => {
       if (chrome.runtime.lastError || !res?.success) {
         saveApiBtn.textContent = 'Lưu';
         pendingStatus.textContent = res?.error || 'Không thể lưu cài đặt';
         return;
       }
-      reporterToken.value = ''; clearToken.checked = false;
       saveApiBtn.textContent = 'Đã lưu';
       setTimeout(() => {
         saveApiBtn.textContent = 'Lưu';

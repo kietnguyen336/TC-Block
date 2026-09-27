@@ -15,12 +15,12 @@ async function admin(path, body) {
 }
 const people = [];
 for(let i=0;i<5;i++) {
-  const reporter = await admin('reporters', {label:'Reporter ' + i});
   const client = backgroundHarness(transport);
-  assert.equal((await client.send({action:'SET_SETTINGS',url:'http://localhost:8787',token:reporter.token})).success,true);
+  assert.equal((await client.send({action:'SET_SETTINGS',url:'http://localhost:8787'})).success,true);
   people.push(client);
 }
 const viewer = backgroundHarness(transport);
+assert.equal((await viewer.send({action:'SET_SETTINGS',url:'http://localhost:8787'})).success,true);
 const data = {channel_handle:'@spam',channel_name:'Spam',reason:'Repeated misleading uploads'};
 for(const client of people) {
   assert.equal((await client.send({action:'SUBMIT_REPORT',data})).queued,false);
