@@ -46,6 +46,13 @@ function testContentScript() {
     assert.ok(jsContent.includes('injectWatchPageButton'), 'Phải có hàm inject nút trang xem video /watch');
     assert.ok(jsContent.includes('injectChannelPageButton'), 'Phải có hàm inject nút trang chủ kênh');
     assert.ok(jsContent.includes('tc-card-report-btn'), 'Phải có class nút báo cáo trên thẻ video');
+    assert.ok(jsContent.includes('yt-lockup-view-model'), 'Phải hỗ trợ thẻ video giao diện YouTube mới');
+    assert.ok(jsContent.includes('yt-page-header-renderer'), 'Phải hỗ trợ header trang kênh giao diện YouTube mới');
+    assert.ok(jsContent.includes('<span>Chặn kênh</span>'), 'Nút trang xem và trang kênh phải ghi Chặn kênh');
+    assert.ok(!jsContent.includes('Chọn lý do nhanh'), 'Không được hiển thị nhóm lý do nhanh');
+    assert.ok(jsContent.includes('RELOAD_EXTENSION_MESSAGE'), 'Phải xử lý content script cũ sau khi reload extension');
+    assert.ok(jsContent.includes('enforceCurrentPageBlock'), 'Trang kênh và trang xem của kênh bị chặn phải bị che');
+    assert.ok(cssContent.includes('#tc-page-block-overlay'), 'Phải có giao diện chặn toàn trang');
     console.log('  [PASS] Day du cac module Shadow DOM, MutationObserver, va cac ham inject');
   }
 

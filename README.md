@@ -5,6 +5,7 @@ Extension Chrome Manifest V3 lọc kênh YouTube bằng lựa chọn cá nhân v
 ## Quy tắc bản đầu
 
 - Báo cáo một kênh sẽ chặn ngay cho riêng người gửi.
+- Thẻ video của kênh bị ẩn; khi mở thẳng trang kênh hoặc video của kênh đã chặn, extension dừng video và che nội dung bằng màn hình chặn.
 - Extension tự tạo danh tính ẩn danh ở lần dùng đầu; người dùng không đăng nhập và không nhập mã. Mỗi danh tính chỉ tính **một phiếu cho mỗi kênh**, kể cả gửi lại.
 - **5 người hợp lệ trong 30 ngày gần nhất** đưa kênh lên mức ưu tiên duyệt, **không tự động chặn cộng đồng**. Quản trị viên có thể duyệt cả kênh dưới ngưỡng khi đã kiểm tra bằng chứng.
 - Chỉ kênh ở trạng thái `approved` được phát hành qua danh sách cộng đồng.
@@ -37,8 +38,8 @@ npm run dev
 ```
 
 1. Mở `http://localhost:8787/admin`, nhập `ADMIN_TOKEN` để vào trang quản trị.
-2. Mở `chrome://extensions`, bật Developer mode, chọn **Load unpacked** và chọn thư mục `extension` của dự án.
-3. Trong popup, mở cài đặt, nhập URL `http://localhost:8787` rồi bấm **Lưu**. Extension tự đăng ký danh tính ẩn danh.
+2. Bản extension production được ghim cứng vào API chính thức và không có ô đổi máy chủ. Luồng extension ↔ backend local được kiểm thử bằng `scripts/test-community-flow.js`; nếu cần chạy Chrome với backend local, tạo một bản dev riêng bằng cách đổi `DEFAULT_API_URL` và thêm quyền localhost trong manifest, không commit hai thay đổi đó.
+3. Mở `chrome://extensions`, bật Developer mode, chọn **Load unpacked** và chọn thư mục `extension` của dự án.
 4. Mở YouTube, báo cáo kênh. Trên trang quản trị, xem bằng chứng và duyệt; các máy khác nhận danh sách ở lần đồng bộ tiếp theo hoặc khi bấm đồng bộ.
 
 ## Triển khai Cloudflare
@@ -64,7 +65,9 @@ npm run check
 npm run deploy
 ```
 
-Mở `ADMIN_ORIGIN/admin` để quản trị qua Cloudflare Access. Người dùng extension không đăng nhập; bản phát hành mặc định dùng `API_ORIGIN` production và tự đăng ký ẩn danh. Khóa `ADMIN_TOKEN` local không cấp quyền quản trị public. Thiếu Access hoặc binding bảo vệ sẽ bị từ chối, không tự giảm mức bảo mật. Hiện extension hỗ trợ API HTTPS `*.workers.dev` và HTTP `localhost:8787` / `127.0.0.1:8787`; API dùng domain riêng cần cập nhật manifest và kiểm tra URL trong background. Domain quản trị riêng không cần thêm vào extension.
+Mở `ADMIN_ORIGIN/admin` để quản trị qua Cloudflare Access. Người dùng extension không đăng nhập; bản phát hành được ghim vào đúng `https://tc-block-api.kietnguyen336.workers.dev`, tự đăng ký ẩn danh và không cho đổi API trong popup. `host_permissions` cũng chỉ cấp cho hostname này. Khóa `ADMIN_TOKEN` local không cấp quyền quản trị public. Thiếu Access hoặc binding bảo vệ sẽ bị từ chối, không tự giảm mức bảo mật. Domain quản trị riêng không cần thêm vào extension.
+
+`EXTENSION_IDS` hiện chứa ID của bản unpacked đang kiểm thử. Khi Chrome Web Store cấp ID chính thức, thêm ID đó vào danh sách phân tách bằng dấu phẩy rồi deploy lại Worker; nếu không, bản phát hành mới sẽ bị từ chối Origin khi đăng ký danh tính hoặc gửi báo cáo.
 
 ## Dữ liệu và đồng bộ
 
@@ -75,9 +78,9 @@ Mở `ADMIN_ORIGIN/admin` để quản trị qua Cloudflare Access. Người dù
 - `moderation_events`: lịch sử quyết định và lý do của quản trị viên.
 - `security_audit`: ai chặn nguồn báo cáo hoặc thay đổi quyết định (Access subject, không ghi token).
 - `public_state`: phiên bản danh sách chặn để đồng bộ nhiều trang nhất quán.
-- `chrome.storage.local.tc_state_v2`: chặn riêng, ngoại lệ, cache cộng đồng, báo cáo chưa gửi và cấu hình; tách theo URL API.
+- `chrome.storage.local.tc_state_v2`: danh tính ẩn danh, chặn riêng, ngoại lệ, cache cộng đồng và báo cáo chưa gửi. Endpoint API không phải cấu hình người dùng.
 
-Danh sách cộng đồng đồng bộ mỗi 10 phút, lúc khởi động hoặc khi bấm đồng bộ; public cache có thể trễ tối đa 60 giây. API trả 500 kênh/trang và extension chỉ thay cache khi tải đủ các trang cùng phiên bản (tối đa 100 trang). Chặn riêng và ngoại lệ được giữ qua các lần đồng bộ. Mất mạng hoặc token ẩn danh hết hạn sẽ giữ báo cáo để thử lại và tự gia hạn khi có mạng; popup hiển thị lỗi. Extension tuân thủ `Retry-After`, gửi tối đa 5 báo cáo chờ mỗi lần đồng bộ và giới hạn kích thước phản hồi. Mỗi URL máy chủ có danh tính và hàng đợi riêng.
+Danh sách cộng đồng đồng bộ mỗi 10 phút, lúc khởi động hoặc khi bấm đồng bộ trong trang **View blocked channels**; public cache có thể trễ tối đa 60 giây. Popup chỉ đọc số lượng đã lưu cục bộ, không tải hoặc dựng toàn bộ danh sách. API trả 500 kênh/trang và extension chỉ thay cache khi tải đủ các trang cùng phiên bản (tối đa 100 trang). Chặn riêng và ngoại lệ được giữ qua các lần đồng bộ. Mất mạng hoặc token ẩn danh hết hạn sẽ giữ báo cáo để thử lại và tự gia hạn khi có mạng; trang quản lý hiển thị lỗi. Extension tuân thủ `Retry-After`, gửi tối đa 5 báo cáo chờ mỗi lần đồng bộ và giới hạn kích thước phản hồi.
 
 ## Nâng cấp từ bản cũ
 

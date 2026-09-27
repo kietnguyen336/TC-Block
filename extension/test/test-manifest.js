@@ -47,6 +47,8 @@ function testManifest() {
 
   // 5. Kiểm tra host_permissions
   assert.ok(manifest.host_permissions.some(h => h.includes('youtube.com')), 'Phải có quyền truy cập youtube.com');
+  assert.ok(manifest.host_permissions.includes('https://tc-block-api.kietnguyen336.workers.dev/*'), 'Phải ghim đúng API production');
+  assert.ok(!manifest.host_permissions.some(h => h.includes('*.workers.dev') || h.includes('localhost') || h.includes('127.0.0.1')), 'Bản production không cấp quyền cho API tùy ý hoặc localhost');
   console.log('  [PASS] Host permissions bao gom YouTube va Cloudflare API');
 
   console.log('\n[PASS] TOAN BO KIEM TRA MANIFEST V3 DA PASS 100%!');

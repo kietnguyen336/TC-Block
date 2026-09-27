@@ -1,7 +1,7 @@
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 
-export function backgroundHarness(fetch, initial = {}) {
+export function backgroundHarness(fetch, initial = {}, options = {}) {
   const storage = structuredClone(initial);
   let listener;
   const broadcasts = [];
@@ -19,7 +19,12 @@ export function backgroundHarness(fetch, initial = {}) {
     alarms: { create() {}, onAlarm: { addListener() {} } },
   };
   const context = vm.createContext({ chrome, fetch, URL, AbortSignal, TextDecoder, console });
-  vm.runInContext(readFileSync(new URL('../background/background.js', import.meta.url), 'utf8'), context);
+  let source = readFileSync(new URL('../background/background.js', import.meta.url), 'utf8');
+  if (options.apiUrl) source = source.replace(
+    "const DEFAULT_API_URL = 'https://tc-block-api.kietnguyen336.workers.dev';",
+    'const DEFAULT_API_URL = ' + JSON.stringify(options.apiUrl) + ';',
+  );
+  vm.runInContext(source, context);
   return {
     storage, broadcasts,
     send(message, url = 'chrome-extension://test/popup/popup.html') {

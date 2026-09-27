@@ -15,6 +15,22 @@
   let blockedChannelsMap = {};
   let isScanning = false;
   let scanScheduled = false;
+  const RELOAD_EXTENSION_MESSAGE = 'Tiện ích vừa được cập nhật. Hãy tải lại trang YouTube rồi thử lại.';
+
+  function sendRuntimeMessage(message, callback) {
+    try {
+      if (!globalThis.chrome?.runtime?.id) {
+        callback(null, RELOAD_EXTENSION_MESSAGE);
+        return;
+      }
+      chrome.runtime.sendMessage(message, (response) => {
+        const error = chrome.runtime.lastError?.message || '';
+        callback(response, error);
+      });
+    } catch (error) {
+      callback(null, /context invalidated/i.test(error?.message || '') ? RELOAD_EXTENSION_MESSAGE : 'Không thể kết nối với tiện ích.');
+    }
+  }
 
   // Biểu tượng SVG Material Design (Tuyệt đối không dùng emoji)
   const ICONS = {
@@ -58,12 +74,16 @@
   // Trích xuất thông tin kênh từ một thẻ video (Video Card Renderer)
   function extractChannelInfoFromCard(cardElement) {
     const linkSelectors = [
+      'yt-content-metadata-view-model a[href^="/@"]',
+      '.yt-lockup-metadata-view-model__avatar a[href^="/@"]',
+      'yt-avatar-shape a[href^="/@"]',
+      'a[href^="/@"]',
       'a.yt-simple-endpoint[href*="/@"]',
       'ytd-channel-name a[href*="/@"]',
       'a#channel-name',
       'ytd-channel-name a',
       '#channel-info a[href*="/@"]',
-      'a[href*="/channel/"]',
+      'a[href^="/channel/"]',
     ];
 
     let handle = null;
@@ -76,7 +96,11 @@
         const h = extractChannelHandle(a.getAttribute('href'));
         if (h) {
           handle = h;
-          name = (a.textContent || '').trim();
+          const textName = (a.textContent || '').trim();
+          const ariaName = (a.getAttribute('aria-label') || a.getAttribute('title') || '').trim();
+          name = textName && textName.toLocaleLowerCase() !== handle.toLocaleLowerCase()
+            ? textName
+            : ariaName;
           url = a.href || `https://www.youtube.com/${handle}`;
           break;
         }
@@ -104,12 +128,8 @@
 
     // Kiểm tra xem kênh có nằm trong danh sách chặn không
     if (blockedChannelsMap[info.channel_handle]) {
-      const newlyHidden = !card.classList.contains('tc-channel-blocked');
       card.classList.add('tc-channel-blocked');
       card.setAttribute('data-tc-blocked', 'true');
-
-      // Tăng biến đếm thống kê
-      if (newlyHidden) chrome.runtime.sendMessage({ action: 'INCREMENT_HIDDEN_COUNT', delta: 1 }).catch(() => {});
       return;
     }
 
@@ -126,6 +146,8 @@
     // Tìm container thumbnail để đặt icon
     const targetContainer = card.querySelector('#thumbnail') ||
                             card.querySelector('ytd-thumbnail') ||
+                            card.querySelector('yt-thumbnail-view-model') ||
+                            card.querySelector('.yt-lockup-view-model__content-image') ||
                             card.querySelector('#details') ||
                             card;
 
@@ -140,8 +162,8 @@
     const btn = document.createElement('button');
     btn.className = 'tc-card-report-btn';
     btn.type = 'button';
-    btn.title = `Báo cáo & Chặn kênh ${info.channel_name}`;
-    btn.setAttribute('aria-label', `Báo cáo & Chặn kênh ${info.channel_name}`);
+    btn.title = `Chặn kênh ${info.channel_name}`;
+    btn.setAttribute('aria-label', `Chặn kênh ${info.channel_name}`);
     btn.innerHTML = ICONS.flag;
 
     btn.addEventListener('click', (e) => {
@@ -176,7 +198,11 @@
     const handle = extractChannelHandle(channelLinkEl.getAttribute('href'));
     if (!handle) return;
 
-    const name = (channelLinkEl.textContent || handle).trim();
+    const linkText = (channelLinkEl.textContent || '').trim();
+    const linkLabel = (channelLinkEl.getAttribute('aria-label') || channelLinkEl.getAttribute('title') || '').trim();
+    const name = linkText && linkText.toLocaleLowerCase() !== handle.toLocaleLowerCase()
+      ? linkText
+      : (linkLabel || handle);
     const info = {
       channel_handle: handle,
       channel_name: name,
@@ -186,8 +212,8 @@
     const btn = document.createElement('button');
     btn.className = 'tc-injected-report-btn tc-watch-report-btn';
     btn.type = 'button';
-    btn.innerHTML = `${ICONS.shieldAlert} <span>Báo cáo Kênh</span>`;
-    btn.title = `Báo cáo kênh ${name} và chặn riêng cho bạn`;
+    btn.innerHTML = `${ICONS.shieldAlert} <span>Chặn kênh</span>`;
+    btn.title = `Chặn kênh ${name}`;
 
     btn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -206,17 +232,32 @@
     if (!path.startsWith('/@') && !path.startsWith('/channel/')) return;
     if (document.querySelector('.tc-channel-header-btn')) return;
 
-    const headerActions = document.querySelector('#channel-header .page-header-view-model-wiz__page-header-actions') ||
-                          document.querySelector('ytd-c4-tabbed-header-renderer #subscribe-button') ||
-                          document.querySelector('#channel-header-container #subscribe-button');
+    const channelHeader = document.querySelector('yt-page-header-renderer') ||
+                          document.querySelector('#channel-header') ||
+                          document.querySelector('ytd-c4-tabbed-header-renderer') ||
+                          document.querySelector('#channel-header-container');
+    const subscribeButton = channelHeader?.querySelector('yt-subscribe-button-view-model') ||
+                            channelHeader?.querySelector('ytd-subscribe-button-renderer') ||
+                            channelHeader?.querySelector('#subscribe-button');
+    const headerActions = channelHeader?.querySelector('.page-header-view-model-wiz__page-header-actions') ||
+                          channelHeader?.querySelector('yt-flexible-actions-view-model') ||
+                          channelHeader?.querySelector('#buttons') ||
+                          subscribeButton?.parentElement;
 
     if (!headerActions) return;
 
     const handle = extractChannelHandle(window.location.href);
     if (!handle) return;
 
-    const titleEl = document.querySelector('#channel-name') || document.querySelector('ytd-channel-name');
-    const name = (titleEl?.textContent || handle).trim();
+    const titleEl = channelHeader?.querySelector('h1') ||
+                    document.querySelector('.dynamic-text-view-model-wiz__h1') ||
+                    document.querySelector('#channel-name') ||
+                    document.querySelector('ytd-channel-name');
+    const headingName = (titleEl?.textContent || '').trim();
+    const metadataName = (document.querySelector('meta[itemprop="name"]')?.getAttribute('content') || '').trim();
+    const documentName = document.title.replace(/\s*-\s*YouTube\s*$/i, '').trim();
+    const name = [headingName, metadataName, documentName]
+      .find(value => value && value.toLocaleLowerCase() !== handle.toLocaleLowerCase()) || handle;
 
     const info = {
       channel_handle: handle,
@@ -227,7 +268,8 @@
     const btn = document.createElement('button');
     btn.className = 'tc-injected-report-btn tc-channel-header-btn';
     btn.type = 'button';
-    btn.innerHTML = `${ICONS.shieldAlert} <span>Báo cáo Kênh</span>`;
+    btn.innerHTML = `${ICONS.shieldAlert} <span>Chặn kênh</span>`;
+    btn.title = `Chặn kênh ${name}`;
 
     btn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -235,7 +277,66 @@
       openReportModal(info);
     });
 
-    headerActions.appendChild(btn);
+    if (subscribeButton?.parentElement === headerActions) {
+      headerActions.insertBefore(btn, subscribeButton.nextSibling);
+    } else {
+      headerActions.appendChild(btn);
+    }
+  }
+
+  function getCurrentPageChannelInfo() {
+    const path = window.location.pathname;
+    if (path.startsWith('/@') || path.startsWith('/channel/')) {
+      const handle = extractChannelHandle(window.location.href);
+      if (!handle) return null;
+      const header = document.querySelector('yt-page-header-renderer') || document.querySelector('#channel-header');
+      const heading = (header?.querySelector('h1')?.textContent || document.querySelector('#channel-name')?.textContent || '').trim();
+      const pageName = document.title.replace(/\s*-\s*YouTube\s*$/i, '').trim();
+      return { channel_handle: handle, channel_name: heading || pageName || handle, channel_url: window.location.href };
+    }
+    if (!path.startsWith('/watch')) return null;
+    const owner = document.querySelector('#owner') || document.querySelector('ytd-watch-metadata #owner');
+    const link = owner?.querySelector('a[href^="/@"], a[href^="/channel/"]') || document.querySelector('#upload-info ytd-channel-name a');
+    if (!link) return null;
+    const handle = extractChannelHandle(link.getAttribute('href'));
+    if (!handle) return null;
+    const text = (link.textContent || '').trim();
+    const label = (link.getAttribute('aria-label') || link.getAttribute('title') || '').trim();
+    return { channel_handle: handle, channel_name: text || label || handle, channel_url: link.href || `https://www.youtube.com/${handle}` };
+  }
+
+  function enforceCurrentPageBlock() {
+    const current = getCurrentPageChannelInfo();
+    const blocked = current && blockedChannelsMap[current.channel_handle];
+    const existing = document.getElementById('tc-page-block-overlay');
+    if (!blocked) {
+      existing?.remove();
+      return;
+    }
+
+    document.querySelectorAll('video').forEach(video => video.pause());
+    if (existing?.getAttribute('data-tc-handle') === current.channel_handle) return;
+    existing?.remove();
+
+    const overlay = document.createElement('section');
+    overlay.id = 'tc-page-block-overlay';
+    overlay.setAttribute('data-tc-handle', current.channel_handle);
+    overlay.setAttribute('role', 'alert');
+    const icon = document.createElement('div');
+    icon.className = 'tc-page-block-icon';
+    icon.innerHTML = ICONS.shieldAlert;
+    const title = document.createElement('h2');
+    title.textContent = 'Kênh này đã bị chặn';
+    const copy = document.createElement('p');
+    const displayName = current.channel_name && current.channel_name.toLocaleLowerCase() !== current.channel_handle.toLocaleLowerCase()
+      ? current.channel_name : (blocked.channel_name || current.channel_handle);
+    copy.textContent = `TC-Block đã ẩn trang và toàn bộ nội dung của ${displayName}.`;
+    const back = document.createElement('button');
+    back.type = 'button';
+    back.textContent = 'Quay lại YouTube';
+    back.addEventListener('click', () => { window.location.href = 'https://www.youtube.com/'; });
+    overlay.append(icon, title, copy, back);
+    document.body.appendChild(overlay);
   }
 
   // Quét toàn bộ DOM để lọc video
@@ -251,6 +352,9 @@
       'ytd-reel-video-renderer',
       'ytd-reel-item-renderer',
       'ytd-channel-renderer',
+      'yt-lockup-view-model',
+      'yt-video-view-model',
+      'ytm-shorts-lockup-view-model',
     ];
 
     const cards = document.querySelectorAll(cardSelectors.join(','));
@@ -260,6 +364,7 @@
 
     injectWatchPageButton();
     injectChannelPageButton();
+    enforceCurrentPageBlock();
 
     isScanning = false;
   }
@@ -431,38 +536,6 @@
         margin-bottom: 8px;
       }
 
-      .tc-chip-group {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-bottom: 16px;
-      }
-
-      .tc-chip {
-        padding: 7px 13px;
-        background: #F7F7F8;
-        border: 1px solid #E5E7EB;
-        border-radius: 20px;
-        font-size: 12.5px;
-        color: #374151;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        user-select: none;
-      }
-
-      .tc-chip:hover {
-        background: #FFF0F2;
-        border-color: #FFB3BC;
-        color: #CC0000;
-      }
-
-      .tc-chip.active {
-        background: #CC0000;
-        border-color: #CC0000;
-        color: #FFFFFF;
-        font-weight: 500;
-      }
-
       .tc-textarea {
         width: 100%;
         min-height: 85px;
@@ -584,15 +657,7 @@
               </div>
             </div>
 
-            <label class="tc-label">Chọn lý do nhanh</label>
-            <div class="tc-chip-group" id="chips">
-              <button class="tc-chip" type="button" data-val="Nội dung giật gân, câu view sai sự thật">Giật gân, câu view</button>
-              <button class="tc-chip" type="button" data-val="Lừa đảo, tin giả mạo nguy hiểm">Lừa đảo, tin giả</button>
-              <button class="tc-chip" type="button" data-val="Nội dung độc hại, phản cảm, bạo lực">Độc hại, phản cảm</button>
-              <button class="tc-chip" type="button" data-val="Spam, reup vi phạm bản quyền">Spam reup, bản quyền</button>
-            </div>
-
-            <label class="tc-label" for="reasonInput">Lý do chi tiết</label>
+            <label class="tc-label" for="reasonInput">Lý do báo cáo</label>
             <textarea class="tc-textarea" id="reasonInput" maxlength="2000" placeholder="Nhập lý do muốn báo cáo và chặn kênh này..."></textarea>
             <p id="reportError" role="alert"></p>
           </div>
@@ -617,7 +682,6 @@
     const cancelBtn = shadow.getElementById('cancelBtn');
     const submitBtn = shadow.getElementById('submitBtn');
     const reasonInput = shadow.getElementById('reasonInput');
-    const chips = shadow.querySelectorAll('.tc-chip');
 
     const closeModal = () => {
       backdrop.style.opacity = '0';
@@ -629,15 +693,6 @@
     cancelBtn.addEventListener('click', closeModal);
     backdrop.addEventListener('click', (e) => {
       if (e.target === backdrop) closeModal();
-    });
-
-    chips.forEach(chip => {
-      chip.addEventListener('click', () => {
-        chips.forEach(c => c.classList.remove('active'));
-        chip.classList.add('active');
-        reasonInput.value = chip.getAttribute('data-val');
-        reasonInput.focus();
-      });
     });
 
     submitBtn.addEventListener('click', async () => {
@@ -652,7 +707,7 @@
       submitBtn.innerHTML = `${ICONS.spinner} <span>Đang xử lý...</span>`;
 
       // Gửi báo cáo thông qua Service Worker
-      chrome.runtime.sendMessage({
+      sendRuntimeMessage({
         action: 'SUBMIT_REPORT',
         data: {
           channel_handle: channelInfo.channel_handle,
@@ -660,9 +715,9 @@
           channel_url: channelInfo.channel_url,
           reason: reason,
         },
-      }, (res) => {
-        if (chrome.runtime.lastError || !res?.success) {
-          shadow.getElementById('reportError').textContent = res?.error || 'Không thể lưu báo cáo. Vui lòng thử lại.';
+      }, (res, runtimeError) => {
+        if (runtimeError || !res?.success) {
+          shadow.getElementById('reportError').textContent = runtimeError || res?.error || 'Không thể lưu báo cáo. Vui lòng thử lại.';
           submitBtn.disabled = false;
           submitBtn.textContent = 'Thử lại';
           return;
@@ -677,6 +732,7 @@
 
         // Ẩn mượt mà các video của kênh này đang có trên trang
         hideVideosOfChannel(channelInfo.channel_handle);
+        enforceCurrentPageBlock();
 
         // Hiển thị Toast thông báo thành công
         showSuccessToast(channelInfo, res);
@@ -802,7 +858,7 @@
   // 5. Khởi tạo và Lắng nghe sự kiện
   function init() {
     // Tải danh sách kênh bị chặn từ Service Worker
-    chrome.runtime.sendMessage({ action: 'GET_BLOCKED_CHANNELS' }, (response) => {
+    sendRuntimeMessage({ action: 'GET_BLOCKED_CHANNELS' }, (response) => {
       if (response && response.channels) {
         blockedChannelsMap = response.channels;
         scheduleScan();

@@ -1,4 +1,4 @@
-// Local choices and approved community data are stored separately for each API.
+// Production builds are pinned to one backend. The endpoint is not user-editable.
 const DEFAULT_API_URL = 'https://tc-block-api.kietnguyen336.workers.dev';
 const SYNC_ALARM_NAME = 'tc_block_sync_alarm';
 const REPORTER_REFRESH_WINDOW_SECONDS = 7 * 86400;
@@ -15,23 +15,23 @@ function normalizeChannel(value) {
   const handle = clean.startsWith('@') ? clean : '@' + clean;
   return /^@[\p{L}\p{M}\p{N}_.-]{1,100}$/u.test(handle) ? handle.toLowerCase() : '';
 }
-function validateUrl(value) {
-  const url = new URL(value);
-  const local = ['localhost', '127.0.0.1'].includes(url.hostname) && url.port === '8787' && url.protocol === 'http:';
-  const worker = url.protocol === 'https:' && url.hostname.endsWith('.workers.dev');
-  if ((!local && !worker) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-    throw new Error('Dùng URL gốc https://*.workers.dev hoặc http://localhost:8787');
-  }
-  return url.origin;
-}
 function emptyScope() { return { personal: {}, allowed: {}, community: {}, pending: {}, token: '', tokenExpiresAt: 0, lastSync: null, syncError: '' }; }
 async function loadState() {
-  const saved = await chrome.storage.local.get(['tc_state_v2', 'tc_api_url']);
-  if (saved.tc_state_v2) return saved.tc_state_v2;
-  let apiUrl = DEFAULT_API_URL;
-  try { apiUrl = validateUrl(saved.tc_api_url || DEFAULT_API_URL); } catch {}
-  // Keep old cache in its original key for recovery. It cannot establish approval.
-  return { apiUrl, scopes: { [apiUrl]: emptyScope() } };
+  const saved = await chrome.storage.local.get(['tc_state_v2']);
+  const previous = saved.tc_state_v2;
+  if (!previous?.scopes || typeof previous.scopes !== 'object') {
+    return { apiUrl: DEFAULT_API_URL, scopes: { [DEFAULT_API_URL]: emptyScope() } };
+  }
+  if (previous.apiUrl === DEFAULT_API_URL && previous.scopes[DEFAULT_API_URL]) return previous;
+  // Preserve local choices from older configurable builds, but never copy their
+  // credential, remote cache or queued reports into the official backend.
+  const legacy = previous.scopes[previous.apiUrl] || emptyScope();
+  const current = previous.scopes[DEFAULT_API_URL] || emptyScope();
+  current.personal = { ...(legacy.personal || {}), ...(current.personal || {}) };
+  current.allowed = { ...(legacy.allowed || {}), ...(current.allowed || {}) };
+  const migrated = { apiUrl: DEFAULT_API_URL, scopes: { [DEFAULT_API_URL]: current } };
+  await save(migrated);
+  return migrated;
 }
 function scopeOf(state) { return state.scopes[state.apiUrl] ||= emptyScope(); }
 function effective(scope) {
@@ -147,33 +147,20 @@ async function sync(state) {
 }
 async function handleMessage(message, sender) {
   if (!message || typeof message.action !== 'string') throw new Error('Thông điệp không hợp lệ');
-  const popup = sender.url === chrome.runtime.getURL('popup/popup.html');
+  const trustedPage = sender.url === chrome.runtime.getURL('popup/popup.html') ||
+    sender.url === chrome.runtime.getURL('details/details.html');
   let youtube = false;
   try { const url = new URL(sender.url); youtube = url.protocol === 'https:' && (url.hostname === 'youtube.com' || url.hostname.endsWith('.youtube.com')); } catch {}
-  if (!popup && (!youtube || !['GET_BLOCKED_CHANNELS', 'SUBMIT_REPORT', 'INCREMENT_HIDDEN_COUNT'].includes(message.action))) throw new Error('Nguồn thông điệp không được phép');
+  if (!trustedPage && (!youtube || !['GET_BLOCKED_CHANNELS', 'SUBMIT_REPORT'].includes(message.action))) throw new Error('Nguồn thông điệp không được phép');
   const state = await loadState();
   const scope = scopeOf(state);
-  if (['GET_SETTINGS', 'SET_SETTINGS'].includes(message.action) && !popup) {
-    throw new Error('Chỉ thay đổi cài đặt từ popup');
-  }
   switch (message.action) {
+    case 'GET_SUMMARY':
+      return { success: true, blockedCount: Object.keys(effective(scope)).length };
     case 'GET_BLOCKED_CHANNELS': {
-      const stats = await chrome.storage.local.get(['tc_hidden_count']);
       return { success: true, channels: effective(scope), apiUrl: state.apiUrl, lastSyncTime: scope.lastSync,
         syncError: scope.syncError, pendingCount: Object.keys(scope.pending).length,
-        pendingError: Object.values(scope.pending).find(p => p.error)?.error || '', hiddenCount: stats.tc_hidden_count || 0,
-        allowed: scope.allowed };
-    }
-    case 'GET_SETTINGS': return { success: true, apiUrl: state.apiUrl, reporterReady: !!scope.token };
-    case 'SET_SETTINGS': {
-      const nextUrl = validateUrl(message.url);
-      state.apiUrl = nextUrl;
-      const next = scopeOf(state);
-      next.reportRetryAt = 0;
-      for (const p of Object.values(next.pending)) { p.status = 'queued'; p.error = ''; }
-      await publish(state);
-      const syncRes = await sync(state);
-      return { success: true, syncRes };
+        pendingError: Object.values(scope.pending).find(p => p.error)?.error || '', allowed: scope.allowed };
     }
     case 'SUBMIT_REPORT': {
       const input = message.data || {};
@@ -201,11 +188,6 @@ async function handleMessage(message, sender) {
       delete scope.allowed[handle]; await publish(state); return { success: true };
     }
     case 'FORCE_SYNC': return sync(state);
-    case 'INCREMENT_HIDDEN_COUNT': {
-      const data = await chrome.storage.local.get(['tc_hidden_count']);
-      const count = (data.tc_hidden_count || 0) + 1;
-      await chrome.storage.local.set({ tc_hidden_count: count }); return { success: true, count };
-    }
     default: throw new Error('Thao tác không hợp lệ');
   }
 }

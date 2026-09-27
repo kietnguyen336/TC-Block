@@ -35,14 +35,17 @@ function card(handle) {
 }
 const cards = [card('@spam'), card('@good')];
 const document = {
-  readyState: 'complete', body: {},
+  readyState: 'complete', body: {}, title: 'YouTube',
   querySelectorAll() { return cards; },
+  querySelector() { return null; },
+  getElementById() { return null; },
   createElement() {return {setAttribute(){},addEventListener(){}};},
 };
 const context = vm.createContext({
   document, URL, CSS: {escape: value => value}, console,
   window: {location:{origin:'https://www.youtube.com',pathname:'/'},getComputedStyle:()=>({position:'relative'}),requestAnimationFrame:fn=>fn(),addEventListener(){}},
   chrome: {runtime: {
+    id: 'tc-block-test',
     sendMessage(message, callback) { messages.push(message); if(callback) callback({channels:map}); return Promise.resolve(); },
     onMessage: {addListener(fn){receive = fn;}},
   }},
@@ -59,7 +62,7 @@ receive({action:'BLOCKLIST_UPDATED',channels:{'@spam':{}}}); drain();
 assert.equal(cards[0].classList.contains('tc-channel-blocked'),true,'Previously scanned card must hide after sync');
 assert.equal(cards[1].classList.contains('tc-channel-blocked'),false);
 receive({action:'BLOCKLIST_UPDATED',channels:{'@spam':{}}}); drain();
-assert.equal(messages.filter(m=>m.action==='INCREMENT_HIDDEN_COUNT').length,1,'Rescan must not double count');
+assert.equal(messages.some(m=>m.action==='INCREMENT_HIDDEN_COUNT'),false,'Filtering channels does not track individual hidden videos');
 receive({action:'BLOCKLIST_UPDATED',channels:{}}); drain();
 assert.equal(cards[0].classList.contains('tc-channel-blocked'),false,'Personal exception or server removal restores card');
 const oldButton = cards[0].button;

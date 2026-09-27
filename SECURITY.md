@@ -16,7 +16,7 @@ Mã nguồn và địa chỉ API được coi là công khai. Backend không tin
 | Truy vấn public | 500 kênh/trang, keyset pagination có revision, cache public 60 giây; không đếm toàn bộ lịch sử báo cáo mỗi lần tải |
 | Giao diện | CSP nonce cho script/style, chống iframe, nosniff, no-referrer, HSTS trên HTTPS; nội dung người dùng hiển thị bằng textContent/escape |
 | Nhật ký | Audit thao tác thu hồi nguồn và quyết định, gắn Access subject; lỗi nội bộ chỉ lộ request ID, không lộ SQL/stack/token |
-| Extension | Không yêu cầu tài khoản người dùng; giới hạn nguồn message và quyền theo popup/content script, tách token theo API, không đi theo redirect; kiểm tra phân trang và giữ cache cũ nếu tải lỗi |
+| Extension | Không yêu cầu tài khoản người dùng; API và `host_permissions` ghim đúng hostname production, popup không cho đổi endpoint; giới hạn nguồn message, không đi theo redirect, kiểm tra phân trang và giữ cache cũ nếu tải lỗi |
 | Dependencies | Lockfile, phiên bản chính xác, CI kiểm thử/audit/build; không commit .dev.vars, .env, private key hoặc output build |
 
 JWT/JWKS dùng thư viện `jose`; không tự cài đặt thuật toán ký. JWKS chỉ lấy từ team domain cấu hình phía server, có timeout và cache; không lấy URL từ JWT do người gọi đưa vào.
