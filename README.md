@@ -1,63 +1,140 @@
-# TC-Block
+<p align="center">
+  <img src="extension/icons/icon128.png" width="96" height="96" alt="TC-Block logo">
+</p>
 
-Extension Chrome Manifest V3 lọc kênh YouTube bằng lựa chọn cá nhân và danh sách cộng đồng do quản trị viên duyệt. Backend chạy trên Cloudflare Workers + D1; giao diện dùng HTML/CSS/JavaScript thuần.
+<h1 align="center">TC-Block</h1>
 
-## Quy tắc bản đầu
+<p align="center">
+  Ẩn toàn bộ nội dung từ các kênh YouTube rác và cùng cộng đồng xây dựng một bộ lọc sạch hơn.
+</p>
 
-- Báo cáo một kênh sẽ chặn ngay cho riêng người gửi.
-- Thẻ video của kênh bị ẩn; khi mở thẳng trang kênh hoặc video của kênh đã chặn, extension dừng video và che nội dung bằng màn hình chặn.
-- Extension tự tạo danh tính ẩn danh ở lần dùng đầu; người dùng không đăng nhập và không nhập mã. Mỗi danh tính chỉ tính **một phiếu cho mỗi kênh**, kể cả gửi lại.
-- **5 người hợp lệ trong 30 ngày gần nhất** đưa kênh lên mức ưu tiên duyệt, **không tự động chặn cộng đồng**. Quản trị viên có thể duyệt cả kênh dưới ngưỡng khi đã kiểm tra bằng chứng.
-- Chỉ kênh ở trạng thái `approved` được phát hành qua danh sách cộng đồng.
-- Từ chối hoặc gỡ chặn chung không xóa lựa chọn chặn riêng của người dùng. Báo cáo tiếp theo không tự mở lại quyết định đã từ chối.
-- “Vẫn hiện kênh này” tạo ngoại lệ cá nhân, không gọi API gỡ chặn cộng đồng. “Bỏ ngoại lệ” áp dụng lại danh sách cộng đồng nếu kênh vẫn nằm trong đó.
-- Báo cáo lặp không làm mới thời điểm phiếu. Phiếu quá 30 ngày vẫn được lưu để xem xét nhưng không tính ưu tiên.
+## TC-Block làm được gì?
 
-## Người báo cáo và chống lạm dụng
+- Thêm nút **Chặn kênh** ngay trên YouTube.
+- Ẩn video, Shorts và nội dung đề xuất của kênh đã chặn.
+- Dừng video và che trang khi bạn mở trực tiếp một kênh đã chặn.
+- Chặn riêng có hiệu lực ngay trên trình duyệt của bạn.
+- Nhận danh sách kênh đã được quản trị viên duyệt từ cộng đồng.
+- Không yêu cầu tài khoản, email hoặc mật khẩu.
 
-Người dùng cài extension là có thể báo cáo ngay. Backend cấp một token ẩn danh 256 bit, extension lưu token cục bộ và tự gia hạn; database chỉ lưu SHA-256. Không có tài khoản người dùng, email người dùng hoặc bước xin mã. Danh tính này không chứng minh một người thật và có thể thay đổi khi xóa dữ liệu/cài lại extension, nên số phiếu chỉ dùng để **xếp ưu tiên cho quản trị viên**, không tự xuất bản quyết định.
+TC-Block không tự quyết định một kênh là rác chỉ vì có nhiều báo cáo. Mọi kênh trong bộ lọc cộng đồng đều phải được quản trị viên xem xét và duyệt.
 
-Đăng ký ẩn danh bị giới hạn theo IP tại edge; mỗi danh tính gửi tối đa 10 yêu cầu/phút và 20 kênh mới trong 24 giờ. Một danh tính chỉ có một phiếu cho một kênh. IP chỉ được hash làm khóa rate limit và không lưu trong database. Quản trị viên có thể chặn nguồn báo cáo từ màn hình bằng chứng; phiếu cũ của nguồn bị chặn không còn tính ưu tiên.
+## Cài đặt
 
-## Chạy local
+Hiện tại extension được cài thủ công bằng chế độ dành cho nhà phát triển của Chrome:
 
-Cần Node.js 24 và npm. Đọc [SECURITY.md](SECURITY.md) trước khi public backend.
+1. Bấm **Code → Download ZIP** trên trang GitHub này và giải nén tập tin.
+2. Mở `chrome://extensions` trong Chrome.
+3. Bật **Developer mode** ở góc trên bên phải.
+4. Bấm **Load unpacked**.
+5. Chọn thư mục `extension` nằm trong thư mục dự án vừa giải nén.
+6. Ghim TC-Block lên thanh công cụ để mở nhanh.
 
-Trong thư mục `backend`:
+Sau khi cài hoặc cập nhật, hãy tải lại các tab YouTube đang mở.
+
+## Cách sử dụng
+
+### Chặn một kênh
+
+1. Mở trang kênh, video hoặc danh sách video trên YouTube.
+2. Bấm **Chặn kênh** tại kênh bạn không muốn thấy.
+3. Nhập lý do và gửi báo cáo.
+4. Nội dung của kênh được ẩn ngay trên máy của bạn.
+
+Lý do báo cáo giúp quản trị viên đánh giá yêu cầu. Việc gửi báo cáo không tự động đưa kênh vào danh sách chặn chung.
+
+### Đồng bộ danh sách cộng đồng
+
+TC-Block chỉ đồng bộ khi bạn yêu cầu, không tự chạy nền:
+
+1. Mở popup TC-Block.
+2. Chọn **View blocked channels**.
+3. Bấm **Sync now**.
+
+Danh sách mới chỉ chứa những kênh đã được quản trị viên duyệt. Báo cáo chưa gửi do mất mạng cũng được thử lại trong lần đồng bộ này.
+
+### Cho phép một kênh xuất hiện lại
+
+Mở **View blocked channels** rồi bấm nút xóa bên cạnh kênh. TC-Block sẽ tạo ngoại lệ cá nhân để kênh tiếp tục hiển thị trên máy của bạn, kể cả khi kênh vẫn nằm trong danh sách cộng đồng. Bạn có thể xóa ngoại lệ bất cứ lúc nào.
+
+## Quyền riêng tư
+
+TC-Block không yêu cầu đăng nhập và không gửi lịch sử xem YouTube lên backend.
+
+Khi bạn gửi báo cáo đầu tiên, extension tạo một token ẩn danh cho lần cài đặt hiện tại. Token giúp backend chỉ tính một phiếu cho mỗi nguồn và kênh, giới hạn spam, đồng thời cho phép quản trị viên vô hiệu hóa nguồn lạm dụng. Token thật chỉ nằm trong bộ nhớ cục bộ của Chrome; D1 chỉ lưu bản hash SHA-256.
+
+Backend không lưu tên, email hay tài khoản Google của người dùng. IP được hash làm khóa rate limit tại Cloudflare và không được lưu trong D1. Nếu xóa dữ liệu extension hoặc cài lại, trình duyệt sẽ nhận một danh tính ẩn danh mới khi gửi báo cáo tiếp theo.
+
+## Danh sách cộng đồng hoạt động thế nào?
+
+- Mỗi danh tính ẩn danh chỉ có một phiếu cho mỗi kênh.
+- Năm nguồn hợp lệ trong 30 ngày đưa kênh vào hàng ưu tiên kiểm duyệt.
+- Đạt ngưỡng không đồng nghĩa với tự động chặn.
+- Chỉ kênh có trạng thái **đã duyệt** mới được phát hành cho cộng đồng.
+- Báo cáo một kênh vẫn chặn kênh đó ngay cho riêng người gửi.
+- Quản trị viên có thể từ chối, gỡ quyết định hoặc vô hiệu hóa nguồn báo cáo rác.
+
+## Câu hỏi thường gặp
+
+**Vì sao đã báo cáo nhưng máy khác vẫn thấy kênh?**
+
+Báo cáo chỉ chặn ngay trên máy gửi. Máy khác chỉ nhận kênh sau khi quản trị viên duyệt và người dùng bấm **Sync now**.
+
+**Vì sao số nguồn báo cáo không phải số người thật?**
+
+Một nguồn đại diện cho một danh tính ẩn danh của extension. Xóa dữ liệu hoặc cài lại extension có thể tạo nguồn mới, vì vậy số phiếu chỉ dùng để sắp xếp ưu tiên kiểm duyệt.
+
+**TC-Block có tự kết nối backend khi mở Chrome không?**
+
+Không. Cài đặt, reload extension, khởi động Chrome và mở trang quản lý đều chỉ đọc dữ liệu cục bộ. Danh sách cộng đồng chỉ được tải khi bấm **Sync now**; báo cáo mới được gửi ngay khi người dùng chủ động gửi.
+
+**Tại sao vẫn nhìn thấy một video của kênh đã chặn?**
+
+Hãy tải lại tab YouTube và kiểm tra kênh có nằm trong mục ngoại lệ hay không. YouTube thường xuyên thay đổi giao diện nên một số vị trí mới có thể cần cập nhật bộ chọn.
+
+## Góp ý và báo lỗi
+
+Hãy mở một [GitHub Issue](https://github.com/kietnguyen336/TC-Block/issues) và ghi rõ:
+
+- Trang YouTube nơi lỗi xuất hiện.
+- Các bước để tái hiện.
+- Phiên bản Chrome và TC-Block.
+- Ảnh chụp màn hình nếu có.
+
+Không đăng token, khóa quản trị hoặc dữ liệu bí mật vào issue công khai.
+
+<details>
+<summary><strong>Dành cho nhà phát triển và người triển khai</strong></summary>
+
+### Kiến trúc
+
+- Chrome Extension Manifest V3 bằng HTML, CSS và JavaScript thuần.
+- Cloudflare Worker cung cấp API công khai và trang kiểm duyệt.
+- Cloudflare D1 lưu báo cáo, quyết định và danh tính ẩn danh.
+- Cloudflare Access bảo vệ trang quản trị production.
+
+Extension production được ghim vào `https://tc-block-api.kietnguyen336.workers.dev`. Người dùng không thể đổi endpoint trong giao diện và `host_permissions` chỉ cấp quyền cho YouTube cùng API này.
+
+### Chạy backend local
+
+Yêu cầu Node.js 24 và npm. Trong thư mục `backend`:
 
 ```powershell
 npm ci
 npm run setup:local
-```
-
-Lệnh setup tạo `.dev.vars` với khóa local ngẫu nhiên và không ghi đè file đã có. Khóa này chỉ có hiệu lực trên loopback HTTP, không dùng cho production. Sau đó khởi tạo schema và chạy Worker:
-
-```powershell
 npx wrangler d1 execute tc-block-db --local --file=./schema.sql
 npm run dev
 ```
 
-1. Mở `http://localhost:8787/admin`, nhập `ADMIN_TOKEN` để vào trang quản trị.
-2. Bản extension production được ghim cứng vào API chính thức và không có ô đổi máy chủ. Luồng extension ↔ backend local được kiểm thử bằng `scripts/test-community-flow.js`; nếu cần chạy Chrome với backend local, tạo một bản dev riêng bằng cách đổi `DEFAULT_API_URL` và thêm quyền localhost trong manifest, không commit hai thay đổi đó.
-3. Mở `chrome://extensions`, bật Developer mode, chọn **Load unpacked** và chọn thư mục `extension` của dự án.
-4. Mở YouTube, báo cáo kênh. Trên trang quản trị, xem bằng chứng và duyệt; các máy khác nhận danh sách ở lần đồng bộ tiếp theo hoặc khi bấm đồng bộ.
+Mở `http://localhost:8787/admin` và dùng `ADMIN_TOKEN` trong `.dev.vars`. Bản extension production không gọi backend local; nếu cần kiểm thử Chrome với local Worker, hãy tạo bản dev riêng và không commit endpoint/quyền localhost.
 
-## Triển khai Cloudflare
+### Triển khai Cloudflare
 
-Trong thư mục `backend`:
-
-```powershell
-npx wrangler login
-npx wrangler d1 create tc-block-db
-```
-
-Cập nhật `database_id` thật và các biến không bí mật trong `wrangler.toml` theo [hướng dẫn bảo mật](SECURITY.md#cấu-hình-production): `API_ORIGIN`, `ADMIN_ORIGIN`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD`, `EXTENSION_IDS`. Giữ `LOCAL_DEV = "false"`. Lưu email quản trị bằng Worker Secret, không commit vào repo:
-
-```powershell
-npx wrangler secret put ADMIN_EMAILS
-```
-
-Tạo ứng dụng Cloudflare Access bảo vệ hostname quản trị, giới hạn đúng quản trị viên và yêu cầu MFA ở nhà cung cấp danh tính. Sau đó:
+1. Tạo D1 và điền `database_id` trong `backend/wrangler.toml`.
+2. Cấu hình `API_ORIGIN`, `ADMIN_ORIGIN`, `ACCESS_TEAM_DOMAIN`, `ACCESS_AUD` và `EXTENSION_IDS`.
+3. Lưu email quản trị bằng `npx wrangler secret put ADMIN_EMAILS`.
+4. Tạo Cloudflare Access application cho hostname quản trị và chỉ cho phép quản trị viên.
+5. Chạy:
 
 ```powershell
 npx wrangler d1 execute tc-block-db --remote --file=./schema.sql
@@ -65,34 +142,28 @@ npm run check
 npm run deploy
 ```
 
-Mở `ADMIN_ORIGIN/admin` để quản trị qua Cloudflare Access. Người dùng extension không đăng nhập; bản phát hành được ghim vào đúng `https://tc-block-api.kietnguyen336.workers.dev`, tự đăng ký ẩn danh và không cho đổi API trong popup. `host_permissions` cũng chỉ cấp cho hostname này. Khóa `ADMIN_TOKEN` local không cấp quyền quản trị public. Thiếu Access hoặc binding bảo vệ sẽ bị từ chối, không tự giảm mức bảo mật. Domain quản trị riêng không cần thêm vào extension.
+Khi Chrome Web Store cấp ID chính thức, thêm ID đó vào `EXTENSION_IDS` rồi deploy lại Worker. Xem đầy đủ yêu cầu hardening và rate limit trong [SECURITY.md](SECURITY.md).
 
-`EXTENSION_IDS` hiện chứa ID của bản unpacked đang kiểm thử. Khi Chrome Web Store cấp ID chính thức, thêm ID đó vào danh sách phân tách bằng dấu phẩy rồi deploy lại Worker; nếu không, bản phát hành mới sẽ bị từ chối Origin khi đăng ký danh tính hoặc gửi báo cáo.
-
-## Dữ liệu và đồng bộ
+### Dữ liệu và vòng đời
 
 - `reporters`: danh tính ẩn danh, hash token và trạng thái hoạt động.
-- `reporter_credentials`: ngày hết hạn token ẩn danh.
-- `community_reports`: một phiếu cho mỗi cặp người/kênh, lý do và thời điểm gửi.
-- `moderation_channels`: kênh chờ duyệt / đã duyệt / từ chối.
-- `moderation_events`: lịch sử quyết định và lý do của quản trị viên.
-- `security_audit`: ai chặn nguồn báo cáo hoặc thay đổi quyết định (Access subject, không ghi token).
-- `public_state`: phiên bản danh sách chặn để đồng bộ nhiều trang nhất quán.
-- `chrome.storage.local.tc_state_v2`: danh tính ẩn danh, chặn riêng, ngoại lệ, cache cộng đồng và báo cáo chưa gửi. Endpoint API không phải cấu hình người dùng.
+- `reporter_credentials`: hạn sử dụng credential.
+- `community_reports`: một phiếu cho mỗi cặp nguồn/kênh.
+- `moderation_channels`: trạng thái chờ duyệt, đã duyệt hoặc từ chối.
+- `moderation_events` và `security_audit`: lịch sử thao tác quản trị.
+- `public_state`: phiên bản danh sách cộng đồng.
 
-Danh sách cộng đồng chỉ đồng bộ khi người dùng bấm **Sync now** trong trang **View blocked channels**; cài đặt, reload extension, khởi động trình duyệt và mở trang quản lý đều không tự gọi backend. Public cache phía Worker có thể trễ tối đa 60 giây. Popup chỉ đọc số lượng đã lưu cục bộ, không tải hoặc dựng toàn bộ danh sách. API trả 500 kênh/trang và extension chỉ thay cache khi tải đủ các trang cùng phiên bản (tối đa 100 trang). Chặn riêng và ngoại lệ được giữ qua các lần đồng bộ. Báo cáo mới vẫn được gửi ngay; nếu mất mạng hoặc token ẩn danh hết hạn, báo cáo được giữ cục bộ và thử lại ở lần **Sync now** tiếp theo. Extension tuân thủ `Retry-After`, gửi tối đa 5 báo cáo chờ mỗi lần đồng bộ và giới hạn kích thước phản hồi.
+Retention chạy hàng tuần: báo cáo quá 90 ngày và audit/sự kiện quá 180 ngày được xóa; credential hết hạn cùng danh tính không còn dữ liệu liên quan cũng được dọn. Kênh đã duyệt được giữ để tiếp tục phát hành. Trang admin có thao tác reset dữ liệu động với cụm xác nhận `XOA TOAN BO`.
 
-Token ẩn danh chỉ được tạo khi có báo cáo cần gửi; reload/cài cập nhật và đồng bộ thông thường không tạo token. Tác vụ retention chạy mỗi Chủ nhật: phiếu quá 90 ngày, audit/sự kiện quá 180 ngày, credential hết hạn, danh tính bỏ hoang và hồ sơ chờ/từ chối cũ không còn bằng chứng sẽ bị xóa. Kênh đã duyệt được giữ để tiếp tục phát hành trong danh sách chặn. Admin có nút **Dọn database** để reset toàn bộ dữ liệu động; thao tác yêu cầu nhập `XOA TOAN BO` và giữ lại một audit reset cùng `public_state`.
+### Tạo lại bộ icon
 
-## Nâng cấp từ bản cũ
+File vector gốc nằm tại `extension/icons/icon-source.svg`. Bộ PNG dùng bởi Chrome được tạo không cần dependency ngoài:
 
-Chạy lại `schema.sql` cho D1 đang dùng trước khi nâng cấp Worker; lệnh có thể chạy lặp lại. Các bảng mới tách khỏi `blocked_channels` / `reports` cũ và không xóa dữ liệu cũ. Dữ liệu cũ chưa có danh tính người báo cáo hoặc quyết định duyệt nên **không tự đưa vào danh sách cộng đồng mới**; có thể xem lại thủ công khi cần.
+```powershell
+node extension/icons/generate-icons.js
+```
 
-Token do quản trị viên cấp ở bản cũ vẫn được extension dùng và tự gia hạn nếu còn hoạt động; người dùng mới được đăng ký ẩn danh tự động. Backend và extension nên nâng cấp cùng nhau vì bản mới thêm `/api/register` và bỏ ô nhập mã thủ công.
-
-Cache cũ `tc_blocked_channels` được giữ nguyên để khôi phục thủ công, nhưng không dùng làm danh sách mới vì không phân biệt được lựa chọn cá nhân và chặn chung. Cần báo cáo lại các kênh muốn chặn riêng. Reload extension và tải lại các tab YouTube sau khi nâng cấp để content script mới có hiệu lực.
-
-## Kiểm thử
+### Kiểm thử
 
 Từ thư mục gốc:
 
@@ -102,8 +173,12 @@ npm run check --prefix backend
 npm audit --prefix backend --audit-level=high
 ```
 
-Bộ kiểm thử gồm các suite SQL, API, background/content script với fixture Chrome/DOM, luồng cộng đồng và các trường hợp tấn công. Có kiểm tra JWT ký RSA thật với JWKS giả lập, JWT giả/sai audience/hết hạn, CSRF, rate limit trước database, body quá dài/chậm, đăng ký/gia hạn/thu hồi danh tính ẩn danh, giới hạn báo cáo đồng thời, phân trang/cache và lỗi mạng. CI chạy test, dependency audit và build dry-run với các GitHub Action ghim theo commit.
+Bộ test kiểm tra phân quyền, JWT/Access, rate limit, giới hạn body, đăng ký và thu hồi nguồn ẩn danh, phân trang đồng bộ, queue báo cáo, bộ lọc DOM, luồng kiểm duyệt và cấu hình Manifest V3. Đây là test bằng fixture/local runtime, không thay thế kiểm thử thủ công trên giao diện YouTube thật.
 
-Đã smoke-test riêng trên runtime workerd và D1 local qua Wrangler; CI vẫn dùng SQLite adapter. Chưa phải E2E trên Chrome/YouTube thật, Access policy hoặc D1 production. Cần kiểm tra thủ công các trang chủ, tìm kiếm, trang xem video và trang kênh sau khi cài extension. Bộ chọn DOM phụ thuộc giao diện YouTube. URL handle và URL channel ID chưa được hợp nhất thành một danh tính kênh duy nhất; báo cáo qua hai dạng có thể tách phiếu. Các URL cũ `/c/` và `/user/` chỉ được xử lý theo tên, chưa có bước phân giải chính thức.
+### Giới hạn hiện tại
 
-Các bản thiết kế cũ trong `docs/superpowers` là lịch sử; quy tắc hiện hành nằm trong README này và mã nguồn.
+- Bộ chọn DOM phụ thuộc giao diện YouTube và có thể cần cập nhật khi YouTube thay đổi.
+- URL dạng handle và channel ID chưa được hợp nhất hoàn toàn thành một định danh duy nhất.
+- URL cũ `/c/` và `/user/` chỉ được nhận diện theo tên, chưa có bước phân giải chính thức.
+
+</details>

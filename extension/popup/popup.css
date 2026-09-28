@@ -4,8 +4,8 @@ body { width:340px; background:#fff; color:var(--ink); font:14px/1.4 Inter,"Sego
 button { font:inherit; }
 .popup-shell { padding:18px; }
 .brand-row { display:flex; align-items:center; gap:11px; }
-.brand-mark { display:grid; place-items:center; width:40px; height:40px; border-radius:13px; color:#fff; background:linear-gradient(145deg,#fb315c,#cf103c); box-shadow:0 8px 20px rgba(225,29,72,.23); }
-.brand-mark svg { width:21px; height:21px; fill:currentColor; }
+.brand-mark { display:grid; place-items:center; width:40px; height:40px; filter:drop-shadow(0 8px 10px rgba(225,29,72,.2)); }
+.brand-mark img { display:block; width:40px; height:40px; }
 .brand-row h1 { font-size:18px; line-height:1.1; letter-spacing:-.4px; }
 .brand-row p { margin-top:3px; color:var(--muted); font-size:11.5px; }
 .count-card { display:flex; align-items:center; justify-content:space-between; margin:18px 0 12px; padding:18px; border-radius:20px; color:#fff; background:radial-gradient(circle at 88% 15%,rgba(255,255,255,.16),transparent 30%),linear-gradient(135deg,#18181b,#3d1420); box-shadow:0 12px 30px rgba(24,24,27,.12); }

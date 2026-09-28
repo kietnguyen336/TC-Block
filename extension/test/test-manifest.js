@@ -35,7 +35,12 @@ function testManifest() {
     assert.ok(fs.existsSync(iconPath), `File icon ${iconRel} phải tồn tại`);
     const stat = fs.statSync(iconPath);
     assert.ok(stat.size > 0, `File icon ${iconRel} không được rỗng`);
+    const png = fs.readFileSync(iconPath);
+    assert.equal(png.subarray(1, 4).toString('ascii'), 'PNG', `${iconRel} phải là PNG`);
+    assert.equal(png.readUInt32BE(16), Number(size), `${iconRel} phải rộng ${size}px`);
+    assert.equal(png.readUInt32BE(20), Number(size), `${iconRel} phải cao ${size}px`);
   });
+  assert.ok(fs.existsSync(path.join(extDir, 'icons', 'icon-source.svg')), 'Phải giữ file nguồn SVG của logo');
   console.log('  [PASS] Toan bo 3 kich thuoc icon PNG (16, 48, 128) deu ton tai va hop le');
 
   // 4. Kiểm tra background service worker

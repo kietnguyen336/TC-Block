@@ -289,7 +289,7 @@ export default {
           const nonce = crypto.randomUUID().replaceAll('-', '');
           response = new Response(renderAdminPage(nonce, localMode(request, env)), { headers: {
             'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store',
-            'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
+          'Content-Security-Policy': `default-src 'none'; script-src 'nonce-${nonce}'; style-src 'nonce-${nonce}'; connect-src 'self'; img-src data:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'`,
           } });
         } else {
           if (!env.DB) fail('Dịch vụ chưa sẵn sàng', 503);

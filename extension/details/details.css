@@ -41,12 +41,9 @@ body {
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 13px;
-  color: #fff;
-  background: linear-gradient(145deg, #fb315c, #d60f3a);
-  box-shadow: 0 8px 18px rgba(225, 29, 72, 0.24);
+  filter: drop-shadow(0 8px 10px rgba(225, 29, 72, 0.2));
 }
-.tc-logo-badge svg { width: 21px; height: 21px; fill: currentColor; }
+.tc-logo-badge img { display: block; width: 40px; height: 40px; }
 .tc-app-title { font-size: 17px; line-height: 1.1; letter-spacing: -0.35px; }
 .tc-status-pill {
   display: inline-flex;
