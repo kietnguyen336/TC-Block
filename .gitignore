@@ -9,3 +9,11 @@ node_modules/
 *.p12
 *.pfx
 backend/dist/
+
+# Keep private service and internal project files local. The public repository
+# contains only the browser extension and its end-user README.
+/backend/
+/docs/
+/scripts/
+/.github/
+/SECURITY.md
