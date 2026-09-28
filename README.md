@@ -8,6 +8,10 @@
   Hide spammy YouTube channels and help build a cleaner community filter.
 </p>
 
+<p align="center">
+  <strong>English</strong> · <a href="README.vi.md">Tiếng Việt</a>
+</p>
+
 ## What TC-Block does
 
 - Adds a channel-blocking button to YouTube.
