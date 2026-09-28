@@ -1,0 +1,161 @@
+/**
+ * TC-Block: Styles can thiệp giao diện YouTube
+ * Thiết kế theo chuẩn Material Design, tông màu Trắng & Đỏ hồng nhạt, không sử dụng emoji.
+ */
+
+/* 1. Ẩn hoàn toàn các thẻ video của kênh bị chặn */
+.tc-channel-blocked {
+  display: none !important;
+}
+
+/* Hiệu ứng fade-out mượt mà khi người dùng vừa bấm chặn */
+.tc-channel-fading {
+  opacity: 0 !important;
+  transform: scale(0.96) !important;
+  transition: opacity 0.28s cubic-bezier(0.2, 0.9, 0.3, 1), transform 0.28s cubic-bezier(0.2, 0.9, 0.3, 1) !important;
+}
+
+/* 2. Nút Báo cáo nhanh trên Thẻ Video (Thumbnail / Action overlay) */
+.tc-card-report-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 208, 214, 0.8);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+  cursor: pointer;
+  opacity: 0.94;
+  transition: opacity 0.18s ease, transform 0.18s ease, background-color 0.18s ease;
+}
+
+/* Hiện nút khi hover vào thẻ video */
+ytd-rich-item-renderer:hover .tc-card-report-btn,
+ytd-video-renderer:hover .tc-card-report-btn,
+ytd-compact-video-renderer:hover .tc-card-report-btn,
+ytd-grid-video-renderer:hover .tc-card-report-btn {
+  opacity: 1;
+}
+
+yt-lockup-view-model:hover .tc-card-report-btn,
+yt-video-view-model:hover .tc-card-report-btn,
+ytm-shorts-lockup-view-model:hover .tc-card-report-btn {
+  opacity: 1;
+}
+
+.tc-card-report-btn:hover {
+  background: #FFF0F2;
+  border-color: #FFB3BC;
+  transform: scale(1.1);
+}
+
+.tc-card-report-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: #CC0000;
+}
+
+/* 3. Nút Báo cáo trên Trang xem video (/watch) và Trang chủ kênh */
+.tc-injected-report-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 14px;
+  margin-left: 10px;
+  border-radius: 18px;
+  border: 1px solid #FFD0D6;
+  background-color: #FFF0F2;
+  color: #CC0000;
+  font-family: "Roboto", "Segoe UI", Arial, sans-serif;
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  box-sizing: border-box;
+  transition: background-color 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.2, 0.9, 0.3, 1),
+              transform 0.1s ease;
+  vertical-align: middle;
+}
+
+.tc-injected-report-btn:hover {
+  background-color: #FFE0E5;
+  border-color: #FFB8C2;
+  box-shadow: 0 3px 10px rgba(204, 0, 0, 0.12);
+}
+
+.tc-injected-report-btn:active {
+  transform: scale(0.97);
+}
+
+.tc-injected-report-btn svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+
+.tc-channel-header-btn {
+  flex: 0 0 auto;
+}
+
+/* Cảnh báo video trên trang /watch nếu đang xem kênh bị chặn */
+.tc-blocked-watch-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 12px 16px;
+  background: #FFF0F2;
+  border: 1px solid #FFCCD2;
+  border-radius: 12px;
+  color: #8A0000;
+  font-size: 14px;
+}
+
+.tc-blocked-watch-banner svg {
+  width: 20px;
+  height: 20px;
+  fill: #CC0000;
+  flex-shrink: 0;
+}
+
+#tc-page-block-overlay {
+  position: fixed;
+  inset: 56px 0 0;
+  z-index: 2147483646;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  color: #f4f4f5;
+  background: #0f0f0f;
+  text-align: center;
+  font-family: "Roboto", "Segoe UI", Arial, sans-serif;
+}
+
+.tc-page-block-icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(255, 82, 115, 0.32);
+  border-radius: 22px;
+  color: #ff4669;
+  background: rgba(225, 29, 72, 0.14);
+}
+
+.tc-page-block-icon svg { width: 31px; height: 31px; fill: currentColor; }
+#tc-page-block-overlay h2 { margin: 0 0 8px; color: #fff; font-size: 24px; }
+#tc-page-block-overlay p { max-width: 520px; margin: 0 0 22px; color: #a1a1aa; font-size: 15px; line-height: 1.55; }
+#tc-page-block-overlay button { height: 42px; padding: 0 20px; border: 0; border-radius: 21px; color: #fff; background: #e11d48; font: 600 14px "Roboto", "Segoe UI", Arial, sans-serif; cursor: pointer; }
+#tc-page-block-overlay button:hover { background: #be123c; }

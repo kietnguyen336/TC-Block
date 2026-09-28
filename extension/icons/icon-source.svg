@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">TC-Block</title>
+  <desc id="desc">A white protection shield with a block symbol on a rose gradient tile.</desc>
+  <defs>
+    <linearGradient id="background" x1="18" y1="14" x2="111" y2="116" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fb315c"/>
+      <stop offset="1" stop-color="#be123c"/>
+    </linearGradient>
+    <radialGradient id="highlight" cx="0" cy="0" r="1" gradientTransform="translate(31 23) rotate(49) scale(92)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fff" stop-opacity=".13"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="31" fill="url(#background)"/>
+  <rect x="6" y="6" width="116" height="116" rx="31" fill="url(#highlight)"/>
+  <rect x="7" y="7" width="114" height="114" rx="30" fill="none" stroke="#fff" stroke-opacity=".18" stroke-width="2"/>
+  <path fill="#fff" fill-rule="evenodd" d="M64 25c11 6 20 9 31 12v21c0 22-13 39-31 46-18-7-31-24-31-46V37c11-3 20-6 31-12Zm-10.5 34a5.5 5.5 0 0 0 0 11h21a5.5 5.5 0 0 0 0-11h-21Z"/>
+</svg>

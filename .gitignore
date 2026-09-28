@@ -1,0 +1,20 @@
+node_modules/
+.wrangler/
+.dev.vars*
+!backend/.dev.vars.example
+.env*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+backend/dist/
+
+# Keep private service and internal project files local. The public repository
+# contains only the browser extension and its end-user README.
+/backend/
+/docs/
+/scripts/
+/.github/
+/SECURITY.md
+/release/

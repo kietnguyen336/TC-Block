@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TC-Block</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main class="popup-shell">
+    <header class="brand-row">
+      <span class="brand-mark" aria-hidden="true">
+        <img src="../icons/icon48.png" width="40" height="40" alt="">
+      </span>
+      <div><h1>TC-Block</h1><p>YouTube community filter</p></div>
+    </header>
+
+    <section class="count-card" aria-label="Blocked channel count">
+      <div><span class="eyebrow">FILTER ACTIVE</span><strong id="blockedCount">0</strong><span class="count-label">blocked channels</span></div>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6.1c0 5.1 3.4 9.8 8 10.9 4.6-1.1 8-5.8 8-10.9V5l-8-3Zm3.7 7.7-4.5 4.6-2.4-2.4 1.4-1.4 1 1 3.1-3.2 1.4 1.4Z"/></svg>
+    </section>
+
+    <button class="primary-action" id="openDetails" type="button">
+      <span>View blocked channels</span>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9.3 17.3 1.4 1.4 6.7-6.7-6.7-6.7-1.4 1.4 5.3 5.3-5.3 5.3Z"/></svg>
+    </button>
+
+    <nav class="link-row" aria-label="Project links">
+      <button id="donateLink" type="button">Donate</button>
+      <span aria-hidden="true"></span>
+      <button id="githubLink" type="button">GitHub</button>
+    </nav>
+
+    <footer><span>Private by design</span><span class="version">v1.1.2</span></footer>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

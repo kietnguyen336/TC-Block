@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TC-Block - Blocked Channels</title>
+  <link rel="stylesheet" href="details.css">
+</head>
+<body>
+  <div class="tc-popup-container">
+    <!-- Header -->
+    <header class="tc-header">
+      <div class="tc-brand">
+        <div class="tc-logo-badge">
+          <img src="../icons/icon48.png" width="40" height="40" alt="">
+        </div>
+        <div>
+          <h1 class="tc-app-title">TC-Block</h1>
+          <div class="tc-status-pill" id="statusPill">
+            <span class="tc-status-dot"></span>
+            <span class="tc-status-text" id="statusText">Loading...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tc-header-actions">
+        <button class="tc-icon-btn" id="syncBtn" title="Download the latest community filter">
+          <svg viewBox="0 0 24 24" class="tc-icon-svg" id="syncIcon">
+            <path d="M17.65 6.35A7.958 7.958 0 0012 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0112 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+          </svg>
+          <span>Sync now</span>
+        </button>
+      </div>
+    </header>
+
+    <section class="tc-overview" aria-label="Protection overview">
+      <div class="tc-overview-copy">
+        <div class="tc-overview-kicker">YOUTUBE FILTER ACTIVE</div>
+        <div class="tc-overview-count"><strong id="blockedCount">0</strong><span>blocked channels</span></div>
+        <p>Includes approved community entries and your personal blocks.</p>
+      </div>
+      <div class="tc-overview-icon" aria-hidden="true">
+        <svg viewBox="0 0 24 24" class="tc-icon-svg"><path d="M12 2 4 5v6.1c0 5.1 3.4 9.8 8 10.9 4.6-1.1 8-5.8 8-10.9V5l-8-3Zm3.7 7.7-4.5 4.6-2.4-2.4 1.4-1.4 1 1 3.1-3.2 1.4 1.4Z"/></svg>
+      </div>
+    </section>
+
+    <p class="tc-sync-note" id="pendingStatus" role="status"></p>
+
+    <!-- Thanh tìm kiếm -->
+    <div class="tc-search-box">
+      <svg viewBox="0 0 24 24" class="tc-search-icon">
+        <path d="M15.5 14h-.79l-.28-.27A6.471 6.471 0 0016 9.5 6.5 6.5 0 109.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+      </svg>
+      <input type="text" class="tc-search-input" id="searchInput" placeholder="Search by channel or reason...">
+    </div>
+
+    <!-- Danh sách kênh bị chặn -->
+    <main class="tc-list-container" id="listContainer">
+      <!-- Items sẽ được render bằng Javascript -->
+    </main>
+    <details class="tc-exceptions"><summary>Exceptions — channels that remain visible</summary><div id="allowedList"></div></details>
+
+    <!-- Trạng thái trống (Empty State) -->
+    <div class="tc-empty-state" id="emptyState" style="display: none;">
+      <div class="tc-empty-icon">
+        <svg viewBox="0 0 24 24" class="tc-icon-svg">
+          <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm4.59-12.42L10 14.17l-2.59-2.58L6 13l4 4 8-8z"/>
+        </svg>
+      </div>
+      <div class="tc-empty-text" id="emptyText">Your block list is empty</div>
+      <div class="tc-empty-sub">Block a channel on YouTube to hide all of its content.</div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="tc-footer">
+      <span class="tc-footer-text">No account · Anonymous identity</span>
+      <span class="tc-footer-badge">v1.1.2</span>
+    </footer>
+  </div>
+
+  <script src="details.js"></script>
+</body>
+</html>
